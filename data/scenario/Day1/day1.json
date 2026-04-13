@@ -1,0 +1,79 @@
+{
+  "scenario_id": "day1",
+  "description": "Synthetic one-day workflow for MVP demo",
+  "initial_inventory": [
+    {
+      "item_name": "Item A",
+      "current_stock": 20,
+      "reorder_point": 30
+    },
+    {
+      "item_name": "Item B",
+      "current_stock": 60,
+      "reorder_point": 20
+    }
+  ],
+  "invoices": [
+    {
+      "invoice_id": "INV-001",
+      "document_type": "purchase",
+      "counterparty_name": "Supplier Alpha",
+      "invoice_date": "2026-04-12",
+      "total_amount": 400.0,
+      "line_items": [
+        {
+          "item_name_raw": "Item A",
+          "quantity": 50,
+          "unit_price": 8.0
+        }
+      ]
+    },
+    {
+      "invoice_id": "INV-002",
+      "document_type": "sales",
+      "counterparty_name": "Customer X",
+      "invoice_date": "2026-04-12",
+      "total_amount": 300.0,
+      "line_items": [
+        {
+          "item_name_raw": "Item A",
+          "quantity": 25,
+          "unit_price": 12.0
+        }
+      ]
+    },
+    {
+      "invoice_id": "INV-003",
+      "document_type": "sales",
+      "counterparty_name": "Customer Y",
+      "invoice_date": "2026-04-12",
+      "total_amount": 250.0,
+      "line_items": [
+        {
+          "item_name_raw": "Item A",
+          "quantity": 20,
+          "unit_price": 12.5
+        }
+      ]
+    },
+    {
+      "invoice_id": "INV-004",
+      "document_type": "sales",
+      "counterparty_name": "Customer Z",
+      "invoice_date": "2026-04-12",
+      "total_amount": 50.0,
+      "line_items": [
+        {
+          "item_name_raw": "Item B",
+          "quantity": 10,
+          "unit_price": 5.0
+        }
+      ]
+    }
+  ],
+  "expected_behavior": {
+    "inventory_updates_after_each_invoice": true,
+    "low_stock_items": ["Item A"],
+    "procurement_recommendation_required": true
+  }
+}
