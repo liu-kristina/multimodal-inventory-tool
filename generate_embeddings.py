@@ -1,194 +1,197 @@
 """
 Step 3 — Generate embeddings and store in ChromaDB.
+Uses OpenAI text-embedding-3-small for high quality retrieval.
 
-Reads extracted_invoices.json (output of extract_entities.py),
-builds a clean text summary for each invoice, generates an embedding
-using a local sentence-transformers model, and stores everything in
-ChromaDB for later retrieval.
+Setup:
+    pip install openai chromadb python-dotenv
 
-No API key required — runs entirely locally.
+Add to your .env file:
+    OPENAI_API_KEY=your-key-here
 
-Run after extract_entities.py:
-    python3 generate_embeddings.py
+Run:
+    python generate_embeddings.py
 
-Then verify retrieval works:
-    python3 generate_embeddings.py --query "who supplies shark cartilage?"
+Test queries:
+    python generate_embeddings.py --query "who supplies shark cartilage powder?"
+    python generate_embeddings.py --query "which customers buy collagen from us?"
+    python generate_embeddings.py --query "what is the lead time from Jiaxing?"
 """
 
 import json
 import sys
+import os
 import chromadb
-from sentence_transformers import SentenceTransformer
+from openai import OpenAI
 from pathlib import Path
+from dotenv import load_dotenv
 
+load_dotenv()
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-EXTRACTED_JSON   = "extracted_invoices.json"
-CHROMA_DIR       = "chroma_db"           # folder where ChromaDB persists data
-COLLECTION_NAME  = "invoices"
-MODEL_NAME       = "all-MiniLM-L6-v2"   # free, local, ~80MB download on first run
+EXTRACTED_JSON  = "extracted_invoices.json"
+CHROMA_DIR      = "chroma_db"
+COLLECTION_NAME = "invoices"
+OPENAI_MODEL    = "text-embedding-3-small"
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
-# ── Build searchable text from extracted fields ────────────────────────────────
+# ── Embedding ──────────────────────────────────────────────────────────────────
+
+def get_embedding(text: str) -> list:
+    response = client.embeddings.create(
+        model=OPENAI_MODEL,
+        input=text,
+    )
+    return response.data[0].embedding
+
+
+# ── Text builders ──────────────────────────────────────────────────────────────
 
 def build_supplier_text(inv: dict) -> str:
-    """
-    Build a clean natural language summary of a supplier invoice.
-    This is what gets embedded — focused on the fields users will query.
-    """
+    supplier = inv.get("supplier_name", "")
+    products = inv.get("line_items", [])
+    product_names = ", ".join(p["product"] for p in products)
+
+    lead = (
+        f"{supplier} supplies {product_names} to California Nutraceuticals. "
+        f"This is a supplier invoice from {supplier}."
+    )
     lines = [
-        f"Invoice type: supplier invoice",
+        lead,
+        f"Supplier: {supplier}",
+        f"Products supplied: {product_names}",
         f"Invoice number: {inv.get('invoice_number', '')}",
         f"Invoice date: {inv.get('invoice_date', '')}",
-        f"Supplier: {inv.get('supplier_name', '')}",
-        f"Buyer: {inv.get('buyer_name', '')}",
-        f"Payment terms: {inv.get('payment_terms', '')}",
-        f"Currency: {inv.get('currency', '')}",
         f"Shipping method: {inv.get('shipping_method', '')}",
         f"Port of loading: {inv.get('port_of_loading', '')}",
-        f"Port of destination: {inv.get('port_of_destination', '')}",
-        f"Shipment date: {inv.get('shipment_date', '')}",
-        f"Expected delivery: {inv.get('expected_delivery', '')}",
-        f"Actual delivery: {inv.get('actual_delivery', '')}",
         f"Total lead time: {inv.get('total_lead_time', '')}",
         f"Typical lead time: {inv.get('typical_lead_time', '')}",
+        f"Payment terms: {inv.get('payment_terms', '')}",
+        f"Currency: {inv.get('currency', '')}",
         f"Grand total: {inv.get('currency', 'USD')} {inv.get('grand_total', 0):,.2f}",
     ]
-    for item in inv.get("line_items", []):
+    for item in products:
         lines.append(
             f"Product: {item['product']}, "
             f"quantity: {item['quantity']} kg, "
             f"unit price: {item['unit_price']}, "
-            f"total: {item['total']}"
+            f"line total: {item['total']}"
         )
     return "\n".join(line for line in lines if line.split(": ", 1)[-1].strip())
 
 
 def build_customer_text(inv: dict) -> str:
-    """
-    Build a clean natural language summary of a customer (sales) invoice.
-    """
+    customer = inv.get("customer_name", "")
+    customer_type = inv.get("customer_type", "")
+    products = inv.get("line_items", [])
+    product_names = ", ".join(p["product"] for p in products)
+
+    lead = (
+        f"{customer} purchases {product_names} from California Nutraceuticals. "
+        f"This is a sales invoice to customer {customer}, a {customer_type}."
+    )
     lines = [
-        f"Invoice type: customer sales invoice",
+        lead,
+        f"Customer: {customer}",
+        f"Customer type: {customer_type}",
+        f"Products purchased: {product_names}",
         f"Invoice number: {inv.get('invoice_number', '')}",
         f"PO number: {inv.get('po_number', '')}",
         f"Invoice date: {inv.get('invoice_date', '')}",
-        f"Seller: {inv.get('seller_name', '')}",
-        f"Customer: {inv.get('customer_name', '')}",
-        f"Customer type: {inv.get('customer_type', '')}",
-        f"Payment terms: {inv.get('payment_terms', '')}",
         f"Shipping method: {inv.get('shipping_method', '')}",
-        f"Ship from: {inv.get('ship_from', '')}",
         f"Ship to: {inv.get('ship_to', '')}",
-        f"Shipment date: {inv.get('shipment_date', '')}",
-        f"Expected delivery: {inv.get('expected_delivery', '')}",
         f"Transit time: {inv.get('transit_time', '')}",
+        f"Payment terms: {inv.get('payment_terms', '')}",
         f"Grand total: USD {inv.get('grand_total', 0):,.2f}",
     ]
-    for item in inv.get("line_items", []):
+    for item in products:
         lines.append(
             f"Product: {item['product']}, "
             f"quantity: {item['quantity']} kg, "
             f"unit price: {item['unit_price']}, "
-            f"total: {item['total']}"
+            f"line total: {item['total']}"
         )
     return "\n".join(line for line in lines if line.split(": ", 1)[-1].strip())
 
 
 def build_text(inv: dict) -> str:
-    """Dispatch to the right builder based on invoice type."""
     if inv.get("invoice_type") == "supplier":
         return build_supplier_text(inv)
     elif inv.get("invoice_type") == "customer":
         return build_customer_text(inv)
-    else:
-        return json.dumps(inv)
+    return json.dumps(inv)
 
 
-# ── Main: embed and store ──────────────────────────────────────────────────────
+# ── Build index ────────────────────────────────────────────────────────────────
 
 def build_index():
-    """Load extracted invoices, embed them, and store in ChromaDB."""
-
-    # Load extracted invoices
     if not Path(EXTRACTED_JSON).exists():
         print(f"ERROR: {EXTRACTED_JSON} not found.")
         print("Run extract_entities.py first.")
+        sys.exit(1)
+
+    if not os.getenv("OPENAI_API_KEY"):
+        print("ERROR: OPENAI_API_KEY not found.")
+        print("Add it to your .env file: OPENAI_API_KEY=your-key-here")
         sys.exit(1)
 
     with open(EXTRACTED_JSON) as f:
         invoices = json.load(f)
 
     print(f"Loaded {len(invoices)} invoices from {EXTRACTED_JSON}")
+    print(f"Embedding model: {OPENAI_MODEL}")
+    print(f"Estimated cost: ~${len(invoices) * 0.00002:.4f} USD")
+    print()
 
-    # Load embedding model (downloads ~80MB on first run, cached after)
-    print(f"Loading embedding model: {MODEL_NAME}")
-    model = SentenceTransformer(MODEL_NAME)
-    print("Model loaded.")
-
-    # Set up ChromaDB persistent client
-    client = chromadb.PersistentClient(path=CHROMA_DIR)
-
-    # Delete existing collection if rebuilding
+    chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
     try:
-        client.delete_collection(COLLECTION_NAME)
+        chroma_client.delete_collection(COLLECTION_NAME)
         print(f"Deleted existing collection '{COLLECTION_NAME}'")
     except Exception:
         pass
 
-    collection = client.create_collection(
+    collection = chroma_client.create_collection(
         name=COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"},  # cosine similarity for text
+        metadata={"hnsw:space": "cosine"},
     )
 
     print(f"Embedding {len(invoices)} invoices...")
     print("-" * 60)
 
-    documents = []
-    embeddings = []
-    metadatas = []
-    ids = []
+    documents, embeddings, metadatas, ids = [], [], [], []
 
     for i, inv in enumerate(invoices):
-        text = build_text(inv)
-        embedding = model.encode(text).tolist()
+        text      = build_text(inv)
+        embedding = get_embedding(text)
 
-        # Metadata stored alongside the vector for filtering and display
         metadata = {
-            "filename":     inv.get("filename", ""),
-            "invoice_type": inv.get("invoice_type", ""),
+            "filename":       inv.get("filename", ""),
+            "invoice_type":   inv.get("invoice_type", ""),
             "invoice_number": inv.get("invoice_number", ""),
-            "invoice_date": inv.get("invoice_date", ""),
-            "grand_total":  float(inv.get("grand_total", 0)),
+            "invoice_date":   inv.get("invoice_date", ""),
+            "grand_total":    float(inv.get("grand_total", 0)),
         }
-
-        # Add type-specific metadata
         if inv.get("invoice_type") == "supplier":
-            metadata["supplier_name"] = inv.get("supplier_name", "")
+            metadata["supplier_name"]   = inv.get("supplier_name", "")
             metadata["shipping_method"] = inv.get("shipping_method", "")
             metadata["total_lead_time"] = inv.get("total_lead_time", "")
         elif inv.get("invoice_type") == "customer":
-            metadata["customer_name"] = inv.get("customer_name", "")
-            metadata["customer_type"] = inv.get("customer_type", "")
+            metadata["customer_name"]   = inv.get("customer_name", "")
+            metadata["customer_type"]   = inv.get("customer_type", "")
             metadata["shipping_method"] = inv.get("shipping_method", "")
 
         doc_id = inv.get("invoice_number", f"doc_{i}")
-
         documents.append(text)
         embeddings.append(embedding)
         metadatas.append(metadata)
         ids.append(doc_id)
 
-        # Print progress every 10 invoices
-        if (i + 1) % 10 == 0 or i == 0:
-            inv_type = inv.get("invoice_type", "?")
-            party = (inv.get("supplier_name") or
-                     inv.get("customer_name") or "?")
-            print(f"  [{i+1:3d}/{len(invoices)}]  "
-                  f"{doc_id:<12}  {inv_type:<8}  {party}")
+        party = inv.get("supplier_name") or inv.get("customer_name") or "?"
+        print(f"  [{i+1:3d}/{len(invoices)}]  "
+              f"{doc_id:<12}  {inv.get('invoice_type','?'):<8}  {party}")
 
-    # Add all documents in one batch (faster than one at a time)
     collection.add(
         documents=documents,
         embeddings=embeddings,
@@ -199,73 +202,82 @@ def build_index():
     print("-" * 60)
     print(f"Done. {len(invoices)} invoices stored in ChromaDB at ./{CHROMA_DIR}/")
     print()
-
-    # Quick sanity check — run two test queries
     print("Running sanity checks...")
-    _test_query(collection, model,
-                "who supplies shark cartilage powder?", n=3)
-    _test_query(collection, model,
-                "which customers buy collagen from us?", n=3)
+    _test_query(collection, "who supplies shark cartilage powder?",   "supplier")
+    _test_query(collection, "which customers buy collagen from us?",  "customer")
+    _test_query(collection, "lead time from Jiaxing Natural Products","supplier")
+    _test_query(collection, "which customer is in Boulder Colorado?", "customer")
 
 
-# ── Query helper ───────────────────────────────────────────────────────────────
+# ── Query helpers ──────────────────────────────────────────────────────────────
 
-def _test_query(collection, model, query: str, n: int = 3):
-    """Run a test query and print results."""
-    print(f"\nQuery: '{query}'")
-    embedding = model.encode(query).tolist()
+def _test_query(collection, query: str, invoice_type: str, n: int = 3):
+    print(f"\nQuery: '{query}' (filter: {invoice_type})")
+    embedding = get_embedding(query)
     results = collection.query(
         query_embeddings=[embedding],
         n_results=n,
+        where={"invoice_type": invoice_type},
         include=["metadatas", "distances"],
     )
     for meta, dist in zip(results["metadatas"][0], results["distances"][0]):
-        score = round(1 - dist, 3)   # cosine similarity (higher = more similar)
-        inv_num  = meta.get("invoice_number", "?")
-        party    = (meta.get("supplier_name") or
-                    meta.get("customer_name") or "?")
-        inv_type = meta.get("invoice_type", "?")
-        print(f"  score={score:.3f}  {inv_num:<12}  {inv_type:<8}  {party}")
+        score   = round(1 - dist, 3)
+        inv_num = meta.get("invoice_number", "?")
+        party   = meta.get("supplier_name") or meta.get("customer_name") or "?"
+        print(f"  score={score:.3f}  {inv_num:<12}  {party}")
 
 
 def query_index(query: str, n: int = 5):
-    """
-    Query the ChromaDB index interactively.
-    Usage: python3 generate_embeddings.py --query "your question here"
-    """
     if not Path(CHROMA_DIR).exists():
-        print(f"ERROR: ChromaDB not found at ./{CHROMA_DIR}/")
-        print("Run generate_embeddings.py (without --query) first.")
+        print(f"ERROR: ChromaDB not found. Run generate_embeddings.py first.")
         sys.exit(1)
 
-    model = SentenceTransformer(MODEL_NAME)
-    client = chromadb.PersistentClient(path=CHROMA_DIR)
-    collection = client.get_collection(COLLECTION_NAME)
+    chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
+    collection    = chroma_client.get_collection(COLLECTION_NAME)
+
+    # Simple intent detection
+    query_lower    = query.lower()
+    supplier_words = ["supplier", "supplies", "supply", "from china",
+                      "lead time", "port", "shipment", "who makes",
+                      "who produces", "source", "manufacturer"]
+    customer_words = ["customer", "client", "buyer", "buys", "purchases",
+                      "sells to", "who orders", "who buys"]
+
+    if any(w in query_lower for w in customer_words):
+        invoice_type = "customer"
+    elif any(w in query_lower for w in supplier_words):
+        invoice_type = "supplier"
+    else:
+        invoice_type = None
 
     print(f"\nQuery: '{query}'")
+    print(f"Detected intent: {invoice_type or 'all invoices'}")
     print(f"Top {n} results:")
     print("-" * 60)
 
-    embedding = model.encode(query).tolist()
-    results = collection.query(
-        query_embeddings=[embedding],
-        n_results=n,
-        include=["metadatas", "distances", "documents"],
-    )
+    embedding    = get_embedding(query)
+    query_params = {
+        "query_embeddings": [embedding],
+        "n_results":        n,
+        "include":          ["metadatas", "distances", "documents"],
+    }
+    if invoice_type:
+        query_params["where"] = {"invoice_type": invoice_type}
+
+    results = collection.query(**query_params)
 
     for i, (meta, dist, doc) in enumerate(zip(
             results["metadatas"][0],
             results["distances"][0],
             results["documents"][0])):
-        score = round(1 - dist, 3)
-        inv_num  = meta.get("invoice_number", "?")
-        party    = (meta.get("supplier_name") or
-                    meta.get("customer_name") or "?")
-        inv_type = meta.get("invoice_type", "?")
-        total    = meta.get("grand_total", 0)
-        print(f"\n[{i+1}] score={score:.3f}  {inv_num}  {inv_type}  {party}")
+        score   = round(1 - dist, 3)
+        inv_num = meta.get("invoice_number", "?")
+        party   = meta.get("supplier_name") or meta.get("customer_name") or "?"
+        itype   = meta.get("invoice_type", "?")
+        total   = meta.get("grand_total", 0)
+        print(f"\n[{i+1}] score={score:.3f}  {inv_num}  {itype}  {party}")
         print(f"     total=${total:,.2f}")
-        print(f"     {doc[:120]}...")
+        print(f"     {doc[:200]}...")
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
@@ -276,6 +288,6 @@ if __name__ == "__main__":
         if idx + 1 < len(sys.argv):
             query_index(sys.argv[idx + 1])
         else:
-            print("Usage: python3 generate_embeddings.py --query 'your question'")
+            print("Usage: python generate_embeddings.py --query 'your question'")
     else:
         build_index()
