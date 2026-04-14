@@ -142,7 +142,7 @@ suppliers and sells to American nutraceutical brands.
 
 You have access to the company's invoice history. When answering questions:
 - Be specific — mention supplier names, product names, prices, and lead times
-- If multiple suppliers provide the same product, compare them
+- If multiple invoices reference the same supplier or customer, list that supplier or customer only once
 - For lead time questions, give the specific days and typical range
 - For price questions, give the actual unit prices from the invoices
 - If the answer isn't in the provided invoices, say so clearly
@@ -215,14 +215,14 @@ def run_interactive():
 
     verbose = False
 
-    # Run a set of demo queries first
-    # demo_queries = [
-    #     "who supplies shark cartilage powder?",
-    #     "what is the lead time from Jiaxing Natural Products?",
-    #     "which customers buy collagen from us?",
-    #     "what is the best price we have paid for shark cartilage?",
-    #     "which customer is in Boulder Colorado?",
-    # ]
+    #Run a set of demo queries first
+    demo_queries = [
+         "who supplies shark cartilage powder?",
+        "what is the lead time from Jiaxing Natural Products?",
+         "which customers buy collagen from us?",
+         "what is the best price we have paid for shark cartilage?",
+        "which customer is in Boulder Colorado?",
+     ]
 
     print("Running demo queries...\n")
     for query in demo_queries:
