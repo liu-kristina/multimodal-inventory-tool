@@ -317,17 +317,7 @@ def generate_invoice(invoice_number):
     draw_section_header(pdf, "SHIPPING & LOGISTICS")
 
     typical_str = (str(supplier["typical_lead_days"][0]) + " - " +
-                   str(supplier["typical_lead_days"][1]) + " days (this supplier)")
-
-    if in_transit:
-        actual_label = "Est. Delivery:"
-        actual_value = actual_delivery.strftime("%d %b %Y") + "  (in transit)"
-        lead_value   = ("~" + str((expected_delivery - invoice_date).days) +
-                        " days estimated")
-    else:
-        actual_label = "Actual Delivery:"
-        actual_value = actual_delivery.strftime("%d %b %Y")
-        lead_value   = str(actual_lead_days) + " days  (invoice to delivery)"
+                   str(supplier["typical_lead_days"][1]) + " days")
 
     draw_single_col_rows(pdf, [
         ("Shipping Method:", shipping_method),
@@ -335,8 +325,6 @@ def generate_invoice(invoice_number):
         ("Port of Destination:", PORT_OF_DESTINATION),
         ("Shipment Date:", shipment_date.strftime("%d %b %Y")),
         ("Expected Delivery:", expected_delivery.strftime("%d %b %Y")),
-        (actual_label, actual_value),
-        ("Total Lead Time:", lead_value),
         ("Typical Lead Time:", typical_str),
     ], label_w=55, value_w=115)
 

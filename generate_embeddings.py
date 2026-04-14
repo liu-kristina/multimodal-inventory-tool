@@ -66,7 +66,7 @@ def build_supplier_text(inv: dict) -> str:
         f"Invoice date: {inv.get('invoice_date', '')}",
         f"Shipping method: {inv.get('shipping_method', '')}",
         f"Port of loading: {inv.get('port_of_loading', '')}",
-        f"Total lead time: {inv.get('total_lead_time', '')}",
+        f"Typical lead time: {inv.get('typical_lead_time', '')}",
         f"Typical lead time: {inv.get('typical_lead_time', '')}",
         f"Payment terms: {inv.get('payment_terms', '')}",
         f"Currency: {inv.get('currency', '')}",
@@ -176,7 +176,7 @@ def build_index():
         if inv.get("invoice_type") == "supplier":
             metadata["supplier_name"]   = inv.get("supplier_name", "")
             metadata["shipping_method"] = inv.get("shipping_method", "")
-            metadata["total_lead_time"] = inv.get("total_lead_time", "")
+            metadata["typical_lead_time"] = inv.get("typical_lead_time", "")
         elif inv.get("invoice_type") == "customer":
             metadata["customer_name"]   = inv.get("customer_name", "")
             metadata["customer_type"]   = inv.get("customer_type", "")
