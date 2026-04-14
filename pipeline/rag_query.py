@@ -216,13 +216,13 @@ def run_interactive():
     verbose = False
 
     # Run a set of demo queries first
-    demo_queries = [
-        "who supplies shark cartilage powder?",
-        "what is the lead time from Jiaxing Natural Products?",
-        "which customers buy collagen from us?",
-        "what is the best price we have paid for shark cartilage?",
-        "which customer is in Boulder Colorado?",
-    ]
+    # demo_queries = [
+    #     "who supplies shark cartilage powder?",
+    #     "what is the lead time from Jiaxing Natural Products?",
+    #     "which customers buy collagen from us?",
+    #     "what is the best price we have paid for shark cartilage?",
+    #     "which customer is in Boulder Colorado?",
+    # ]
 
     print("Running demo queries...\n")
     for query in demo_queries:
