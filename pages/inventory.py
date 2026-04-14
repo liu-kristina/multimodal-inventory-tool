@@ -6,43 +6,79 @@ import dash
 from dash import html, dcc, Input, Output, State, callback
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
+import sqlite3
 import json
 import os
 
 dash.register_page(__name__, path="/inventory", title="Inventory")
 
-# ── Dummy inventory data ───────────────────────────────────────────────────────
-# Replace this with your SQLite database in week 3
+# ── Database ───────────────────────────────────────────────────────────────────
 
-INVENTORY = [
-    {"product": "Collagen Powder",            "stock": 450,  "reorder_at": 100, "unit": "kg"},
-    {"product": "Shark Cartilage Powder",     "stock": 80,   "reorder_at": 150, "unit": "kg"},
-    {"product": "Fish Collagen Peptides",     "stock": 210,  "reorder_at": 100, "unit": "kg"},
-    {"product": "Hydrolyzed Marine Collagen", "stock": 55,   "reorder_at": 100, "unit": "kg"},
-    {"product": "Bovine Gelatin Type A",      "stock": 320,  "reorder_at": 80,  "unit": "kg"},
-    {"product": "Bovine Cartilage Extract",   "stock": 40,   "reorder_at": 80,  "unit": "kg"},
-    {"product": "Plant Extract - Turmeric",   "stock": 180,  "reorder_at": 60,  "unit": "kg"},
-    {"product": "Plant Extract - Ashwagandha","stock": 95,   "reorder_at": 60,  "unit": "kg"},
-    {"product": "Plant Extract - Elderberry", "stock": 30,   "reorder_at": 60,  "unit": "kg"},
-    {"product": "Hyaluronic Acid Powder",     "stock": 120,  "reorder_at": 50,  "unit": "kg"},
-    {"product": "Chondroitin Sulfate",        "stock": 200,  "reorder_at": 80,  "unit": "kg"},
-    {"product": "Glucosamine HCl",            "stock": 170,  "reorder_at": 80,  "unit": "kg"},
-]
+def get_inventory():
+    conn = sqlite3.connect("inventory.db")
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT * FROM stock ORDER BY product_name").fetchall()
+    conn.close()
+    return [
+        {
+            "product": row["product_name"],
+            "stock": row["quantity_kg"],
+            "reorder_at": row["reorder_at"],
+            "unit": row["unit"],
+        }
+        for row in rows
+    ]
 
 
 def get_low_stock():
-    return [p for p in INVENTORY if p["stock"] <= p["reorder_at"]]
+    return [p for p in get_inventory() if p["stock"] <= p["reorder_at"]]
 
+def setup_db():
+    """
+    One-time setup: adds missing columns and sets reorder thresholds.
+    Run manually from terminal when needed:
+        python3 -c "from pages.inventory import setup_db; setup_db()"
+    """
+    conn = sqlite3.connect("inventory.db")
+    try:
+        conn.execute("ALTER TABLE stock ADD COLUMN reorder_at REAL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    try:
+        conn.execute("ALTER TABLE stock ADD COLUMN unit TEXT DEFAULT 'kg'")
+    except sqlite3.OperationalError:
+        pass  # column already exists
 
+    reorder_thresholds = [
+        ("Collagen Powder",             100),
+        ("Shark Cartilage Powder",      150),
+        ("Fish Collagen Peptides",      100),
+        ("Hydrolyzed Marine Collagen",  100),
+        ("Bovine Gelatin Type A",       80),
+        ("Bovine Cartilage Extract",    80),
+        ("Plant Extract - Turmeric",    60),
+        ("Plant Extract - Ashwagandha", 60),
+        ("Plant Extract - Elderberry",  60),
+        ("Hyaluronic Acid Powder",      50),
+        ("Chondroitin Sulfate",         80),
+        ("Glucosamine HCl",             80),
+    ]
+    for product, reorder in reorder_thresholds:
+        conn.execute("UPDATE stock SET reorder_at = ? WHERE product_name = ?", (reorder, product))
+    conn.commit()
+    conn.close()
+    print("Done")
+    
 def make_chart():
     """Build stock level bar chart colored by status."""
-    products = [p["product"].replace("Plant Extract - ", "") for p in INVENTORY]
-    stocks   = [p["stock"] for p in INVENTORY]
+    inventory = get_inventory()
+    products = [p["product"].replace("Plant Extract - ", "") for p in inventory]
+    stocks   = [p["stock"] for p in inventory]
     colors   = [
         "#dc3545" if p["stock"] <= p["reorder_at"]
         else "#fd7e14" if p["stock"] <= p["reorder_at"] * 1.5
         else "#198754"
-        for p in INVENTORY
+        for p in inventory
     ]
 
     fig = go.Figure(go.Bar(
@@ -71,8 +107,9 @@ def make_chart():
 # ── Layout ─────────────────────────────────────────────────────────────────────
 
 def layout():
+    inventory   = get_inventory()
     low_stock   = get_low_stock()
-    total       = len(INVENTORY)
+    total       = len(inventory)
     low_count   = len(low_stock)
     healthy     = total - low_count
 
@@ -145,7 +182,7 @@ def layout():
                                 )
                             ),
                         ])
-                        for p in INVENTORY
+                        for p in inventory
                     ]),
                 ],
                 bordered=False,
