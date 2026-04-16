@@ -46,6 +46,7 @@ GMAIL_LABEL        = "invoices"
 IMAP_SERVER        = "imap.gmail.com"
 POLL_INTERVAL      = 300  # seconds — change to 86400 for production
 INVOICE_SAVE_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "invoices")
+CUSTOMER_SAVE_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "customer_invoices")
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -148,13 +149,19 @@ def tool_save_invoice(extracted: dict) -> str:
 
 
 def tool_save_pdf(tmp_path: str, filename: str) -> str:
-    os.makedirs(INVOICE_SAVE_DIR, exist_ok=True)
-    dest = os.path.join(INVOICE_SAVE_DIR, filename)
+    if filename.startswith("customer_invoice"):
+        save_dir = CUSTOMER_SAVE_DIR
+        label = "data/customer_invoices"
+    else:
+        save_dir = INVOICE_SAVE_DIR
+        label = "data/invoices"
+    os.makedirs(save_dir, exist_ok=True)
+    dest = os.path.join(save_dir, filename)
     if os.path.exists(dest):
         base, ext = os.path.splitext(filename)
-        dest = os.path.join(INVOICE_SAVE_DIR, f"{base}_{int(time.time())}{ext}")
+        dest = os.path.join(save_dir, f"{base}_{int(time.time())}{ext}")
     shutil.copy2(tmp_path, dest)
-    return f"PDF saved to data/invoices/{os.path.basename(dest)}"
+    return f"PDF saved to {label}/{os.path.basename(dest)}"
 
 
 def tool_embed_invoices() -> str:
@@ -316,7 +323,7 @@ def execute_tool(name: str, inputs: dict) -> str:
 # ── Claude agent loop ──────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """
-You are an inventory agent for HS Biopharmaceuticals, a raw material distributor.
+You are an inventory agent for California Nutraceuticals Inc, a raw material distributor.
 Your job is to process invoice PDFs and keep the stock database accurate.
 
 For each invoice PDF you must:

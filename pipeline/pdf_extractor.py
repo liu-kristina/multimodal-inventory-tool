@@ -184,8 +184,9 @@ def extract_all(folder: str) -> list:
 # ── Run ────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    supplier_dir = "../data/invoices"
-    customer_dir = "../data/customer_invoices"
+    BASE_DIR     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    supplier_dir = os.path.join(BASE_DIR, "data", "invoices")
+    customer_dir = os.path.join(BASE_DIR, "data", "customer_invoices")
 
     init_db()
 
