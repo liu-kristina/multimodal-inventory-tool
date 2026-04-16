@@ -1,0 +1,7 @@
+Day 3
+
+Inventory dashboard reading from SQLite
+RAG chatbot querying ChromaDB
+AI invoice extraction (pdf_extractor.py)
+Gmail agent that processes invoices, updates stock, and embeds to ChromaDB
+Products stored in DB instead of hardcoded

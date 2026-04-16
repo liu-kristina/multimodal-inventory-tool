@@ -33,6 +33,37 @@ def get_inventory():
 def get_low_stock():
     return [p for p in get_inventory() if p["stock"] <= p["reorder_at"]]
 
+
+def get_pending_products():
+    """Return products flagged by the invoice agent as unknown."""
+    try:
+        conn = sqlite3.connect("inventory.db")
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("""
+            SELECT * FROM pending_products WHERE status = 'pending' ORDER BY created_at DESC
+        """).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+    except Exception:
+        return []
+
+
+def approve_pending_product(product_name: str):
+    """Move a pending product into the products table and mark as approved."""
+    conn = sqlite3.connect("inventory.db")
+    conn.execute("INSERT OR IGNORE INTO products (product_name) VALUES (?)", (product_name,))
+    conn.execute("UPDATE pending_products SET status = 'approved' WHERE product_name = ?", (product_name,))
+    conn.commit()
+    conn.close()
+
+
+def dismiss_pending_product(product_name: str):
+    """Dismiss a pending product without adding it."""
+    conn = sqlite3.connect("inventory.db")
+    conn.execute("UPDATE pending_products SET status = 'dismissed' WHERE product_name = ?", (product_name,))
+    conn.commit()
+    conn.close()
+
 def setup_db():
     """
     One-time setup: adds missing columns and sets reorder thresholds.
@@ -155,6 +186,9 @@ def layout():
                 className="mb-4",
             ),
 
+            # Pending products section
+            html.Div(id="pending-products-section"),
+
             # Stock chart
             html.H6("Stock Levels", className="fw-bold mb-2"),
             dcc.Graph(figure=make_chart(), config={"displayModeBar": False}),
@@ -194,3 +228,81 @@ def layout():
         ],
         style={"maxWidth": "900px"},
     )
+
+
+# ── Callbacks ──────────────────────────────────────────────────────────────────
+
+@callback(
+    Output("pending-products-section", "children"),
+    Input("pending-products-section", "id"),  # triggers on page load
+)
+def render_pending_products(_):
+    """Render the pending products review section."""
+    pending = get_pending_products()
+    if not pending:
+        return html.Div()
+
+    return html.Div([
+        html.H6("New Products — Pending Review", className="fw-bold mt-4 mb-2 text-warning"),
+        html.P(
+            "The invoice agent found these products that aren't in your products list. "
+            "Approve to add them, or dismiss to ignore.",
+            className="text-muted small mb-3",
+        ),
+        html.Div([
+            dbc.Card(
+                dbc.CardBody([
+                    dbc.Row([
+                        dbc.Col(html.Span(p["product_name"], className="fw-semibold"), width=6),
+                        dbc.Col(html.Small(p["created_at"], className="text-muted"), width=3),
+                        dbc.Col([
+                            dbc.Button(
+                                "Approve",
+                                id={"type": "approve-product", "index": p["product_name"]},
+                                color="success",
+                                size="sm",
+                                className="me-2",
+                            ),
+                            dbc.Button(
+                                "Dismiss",
+                                id={"type": "dismiss-product", "index": p["product_name"]},
+                                color="secondary",
+                                size="sm",
+                                outline=True,
+                            ),
+                        ], width=3, className="text-end"),
+                    ], align="center"),
+                ]),
+                className="mb-2",
+            )
+            for p in pending
+        ]),
+    ], className="mb-4")
+
+
+@callback(
+    Output("pending-products-section", "children", allow_duplicate=True),
+    Input({"type": "approve-product", "index": dash.ALL}, "n_clicks"),
+    Input({"type": "dismiss-product", "index": dash.ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def handle_pending_action(approve_clicks, dismiss_clicks):
+    """Handle approve or dismiss button clicks."""
+    ctx = dash.callback_context
+    if not ctx.triggered or not any(approve_clicks + dismiss_clicks):
+        return dash.no_update
+
+    triggered = ctx.triggered[0]["prop_id"]
+    import json as _json
+    btn = _json.loads(triggered.split(".")[0])
+    product_name = btn["index"]
+    action = btn["type"]
+
+    if action == "approve-product":
+        approve_pending_product(product_name)
+    elif action == "dismiss-product":
+        dismiss_pending_product(product_name)
+
+    # Re-render the section
+    return render_pending_products(None)
+

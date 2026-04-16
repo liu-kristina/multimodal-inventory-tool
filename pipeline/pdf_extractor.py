@@ -1,198 +1,166 @@
 """
 Entity extractor for California Nutraceuticals invoices.
-Uses regex and string parsing — no API required.
+Uses Claude AI for flexible extraction — handles variations in wording,
+different supplier formats, and unknown products.
 
 Handles two invoice types:
   - Supplier invoices  (COMMERCIAL INVOICE) from Chinese suppliers
   - Customer invoices  (SALES INVOICE)      to American buyers
+
+Setup:
+    pip install anthropic pymupdf python-dotenv
+
+Add to your .env file:
+    ANTHROPIC_API_KEY=your-key-here
 """
 
 import re
 import json
-import fitz          # pip install pymupdf
+import fitz
 import os
+import sys
+import anthropic
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from database import init_db, save_invoice, get_known_products
+
+client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 
 
 # ── Text extraction ────────────────────────────────────────────────────────────
 
 def extract_text(pdf_path: str) -> str:
-    """Extract raw text from a PDF using PyMuPDF."""
     doc = fitz.open(pdf_path)
     pages = [page.get_text() for page in doc]
     return "\n".join(pages)
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# ── AI extraction ──────────────────────────────────────────────────────────────
 
-def _find(pattern: str, text: str, default: str = "") -> str:
-    """Return first capture group or default if no match."""
-    m = re.search(pattern, text)
-    return m.group(1).strip() if m else default
+EXTRACTION_PROMPT = """You are extracting structured data from a business invoice.
+Extract all fields and return ONLY valid JSON — no preamble, no markdown, no explanation.
 
+Known products list (for matching line items):
+{known_products}
 
-def _find_float(pattern: str, text: str, default: float = 0.0) -> float:
-    """Return first capture group as a float (strips commas)."""
-    m = re.search(pattern, text)
-    if m:
-        try:
-            return float(m.group(1).replace(",", ""))
-        except ValueError:
-            pass
-    return default
+Return this exact JSON structure:
+{{
+  "invoice_type": "supplier or customer",
+  "invoice_number": "string or null",
+  "invoice_date": "string or null",
+  "payment_due": "string or null",
+  "payment_terms": "string or null",
+  "currency": "string or null",
+  "supplier_name": "string or null",
+  "customer_name": "string or null",
+  "customer_type": "string or null",
+  "shipping_method": "string or null",
+  "port_of_loading": "string or null",
+  "port_of_destination": "string or null",
+  "ship_from": "string or null",
+  "ship_to": "string or null",
+  "shipment_date": "string or null",
+  "expected_delivery": "string or null",
+  "lead_time": "string or null",
+  "transit_time": "string or null",
+  "po_number": "string or null",
+  "subtotal": 0.0,
+  "freight": 0.0,
+  "grand_total": 0.0,
+  "line_items": [
+    {{
+      "product": "matched product name from known list, or raw name if unknown",
+      "quantity": 0,
+      "unit": "kg",
+      "unit_price": 0.0,
+      "total": 0.0,
+      "is_unknown_product": false
+    }}
+  ],
+  "unknown_products": []
+}}
 
+Rules:
+- invoice_type is "supplier" for COMMERCIAL INVOICE, "customer" for SALES INVOICE
+- Match line items to known products as closely as possible (e.g. "Shark Cartilage Pwd" -> "Shark Cartilage Powder")
+- If a product cannot be matched, set is_unknown_product to true and add to unknown_products list
+- Use null for missing fields, not empty strings
+- All monetary values must be floats
 
-def _detect_invoice_type(text: str) -> str:
-    """Return 'supplier' or 'customer' based on the title line."""
-    if "COMMERCIAL INVOICE" in text:
-        return "supplier"
-    if "SALES INVOICE" in text:
-        return "customer"
-    return "unknown"
-
-
-# ── Product line parser ────────────────────────────────────────────────────────
-
-KNOWN_PRODUCTS = [
-    "Collagen Powder",
-    "Shark Cartilage Powder",
-    "Bovine Gelatin Type A",
-    "Fish Collagen Peptides",
-    "Hydrolyzed Marine Collagen",
-    "Bovine Cartilage Extract",
-    "Plant Extract - Ginseng Root",
-    "Plant Extract - Turmeric",
-    "Plant Extract - Ashwagandha",
-    "Plant Extract - Elderberry",
-    "Plant Extract - Echinacea",
-    "Hyaluronic Acid Powder",
-    "Chondroitin Sulfate",
-    "Glucosamine HCl",
-    "Collagen Peptides Type I",
-]
-
-def _extract_line_items(text: str) -> list:
-    """
-    Parse product line items from the invoice text.
-    Each product line looks like:
-        Collagen Powder\n145\nkg\nUSD 76.49\nUSD 11,091.05
-    """
-    items = []
-    for product in KNOWN_PRODUCTS:
-        # Match product name followed by qty, unit, unit_price, total
-        pattern = (
-            re.escape(product) +
-            r"\s+(\d+)\s+kg\s+(?:USD|EUR)\s+([\d,]+\.\d{1,2})\s+(?:USD|EUR)\s+([\d,]+\.\d{2})"
-        )
-        for m in re.finditer(pattern, text):
-            items.append({
-                "product":    product,
-                "quantity":   int(m.group(1)),
-                "unit":       "kg",
-                "unit_price": float(m.group(2).replace(",", "")),
-                "total":      float(m.group(3).replace(",", "")),
-            })
-    return items
+Invoice text:
+{invoice_text}"""
 
 
-# ── Supplier invoice extractor ─────────────────────────────────────────────────
-
-def extract_supplier_invoice(text: str, filename: str) -> dict:
-    """Extract all fields from a COMMERCIAL INVOICE (supplier → Cal Nutra)."""
-
-    # Supplier name is the first line after SELLER / EXPORTER header
-    supplier_name = ""
-    m = re.search(r"SELLER / EXPORTER\s*\nBUYER / IMPORTER\s*\n(.+?)\n", text)
-    if m:
-        supplier_name = m.group(1).strip()
-
-    return {
-        "filename":        filename,
-        "invoice_type":    "supplier",
-        "invoice_number":  _find(r"Invoice (?:No|Number):\s*\n?([\w-]+)", text),
-        "invoice_date":    _find(r"Invoice Date:\s*\n?(.+?)(?:\n|$)", text),
-        "payment_due":     _find(r"(?:Due Date|Payment Due):\s*\n?(.+?)(?:\n|$)", text),
-        "payment_terms":   _find(r"Payment Terms:\s*\n?(.+?)(?:\n|$)", text),
-        "currency":        _find(r"Currency:\s*\n?(\w+)", text),
-        "supplier_name":   supplier_name,
-        "buyer_name":      "California Nutraceuticals Inc.",
-        # Shipping & logistics
-        "shipping_method": _find(r"Shipping Method:\s*\n?(.+?)(?:\n|$)", text),
-        "port_of_loading": _find(r"Port of Loading:\s*\n?(.+?)(?:\n|$)", text),
-        "port_of_destination": _find(
-            r"Port of Destination:\s*\n?(.+?)(?:\n|$)", text),
-        "shipment_date":   _find(r"Shipment Date:\s*\n?(.+?)(?:\n|$)", text),
-        "expected_delivery": _find(
-            r"Expected Delivery:\s*\n?(.+?)(?:\n|$)", text),
-        "typical_lead_time": _find(
-            r"Typical Lead Time:\s*\n?(.+?)(?:\n|$)", text),
-        # Financials
-        "line_items":      _extract_line_items(text),
-        "subtotal":        _find_float(r"Subtotal:\s*USD\s*([\d,]+\.\d{2})", text),
-        "freight":         _find_float(
-            r"Freight & Insurance:\s*USD\s*([\d,]+\.\d{2})", text),
-        "grand_total":     _find_float(
-            r"Grand Total:\s*USD\s*([\d,]+\.\d{2})", text),
-        # Banking
-        "swift_code":      _find(r"SWIFT Code:\s*(\w+)", text),
-    }
+def _handle_unknown_products(unknown_products: list):
+    """Flag unknown products in a pending_products table for review in the app."""
+    try:
+        from database import get_connection
+        conn = get_connection()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS pending_products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_name TEXT NOT NULL UNIQUE,
+                status TEXT DEFAULT 'pending',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        for product in unknown_products:
+            conn.execute(
+                "INSERT OR IGNORE INTO pending_products (product_name) VALUES (?)",
+                (product,)
+            )
+            print(f"  [NEW PRODUCT] '{product}' flagged for review in app.")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"  [WARN] Could not save unknown products: {e}")
 
 
-# ── Customer invoice extractor ─────────────────────────────────────────────────
+def extract_invoice_with_ai(text: str, filename: str) -> dict:
+    """Use Claude to extract all invoice fields from raw text."""
+    known_products = get_known_products()
+    known_products_str = "\n".join(f"- {p}" for p in known_products)
 
-def extract_customer_invoice(text: str, filename: str) -> dict:
-    """Extract all fields from a SALES INVOICE (Cal Nutra → customer)."""
+    prompt = EXTRACTION_PROMPT.format(
+        known_products=known_products_str,
+        invoice_text=text,
+    )
 
-    # Customer name is the first company name after BILL TO / SHIP TO
-    customer_name = ""
-    m = re.search(r"BILL TO / SHIP TO\s*\n(?:California Nutraceuticals Inc\.\s*\n)?(.+?)\n", text)
-    if m:
-        customer_name = m.group(1).strip()
+    message = client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=1000,
+        messages=[{"role": "user", "content": prompt}],
+    )
 
-    return {
-        "filename":        filename,
-        "invoice_type":    "customer",
-        "invoice_number":  _find(r"Invoice No:\s*\n?([\w-]+)", text),
-        "po_number":       _find(r"PO Number:\s*\n?([\w-]+)", text),
-        "invoice_date":    _find(r"Invoice Date:\s*\n?(.+?)(?:\n|$)", text),
-        "payment_due":     _find(r"Payment Due:\s*\n?(.+?)(?:\n|$)", text),
-        "payment_terms":   _find(r"Payment Terms:\s*\n?(.+?)(?:\n|$)", text),
-        "currency":        "USD",
-        "seller_name":     "California Nutraceuticals Inc.",
-        "customer_name":   customer_name,
-        "customer_type":   _find(r"Type:\s*(.+?)(?:\n|$)", text),
-        # Shipping
-        "shipping_method": _find(r"Shipping Method:\s*\n?(.+?)(?:\n|$)", text),
-        "ship_from":       _find(r"Ship From:\s*\n?(.+?)(?:\n|$)", text),
-        "ship_to":         _find(r"Ship To:\s*\n?(.+?)(?:\n|$)", text),
-        "shipment_date":   _find(r"Shipment Date:\s*\n?(.+?)(?:\n|$)", text),
-        "expected_delivery": _find(
-            r"Expected Delivery:\s*\n?(.+?)(?:\n|$)", text),
-        "transit_time":    _find(r"Transit Time:\s*\n?(.+?)(?:\n|$)", text),
-        # Financials
-        "line_items":      _extract_line_items(text),
-        "subtotal":        _find_float(r"Subtotal:\s*USD\s*([\d,]+\.\d{2})", text),
-        "shipping_cost":   _find_float(r"Shipping:\s*USD\s*([\d,]+\.\d{2})", text),
-        "grand_total":     _find_float(r"Total Due:\s*USD\s*([\d,]+\.\d{2})", text),
-    }
+    raw = message.content[0].text.strip()
+    raw = re.sub(r"^```json\s*", "", raw)
+    raw = re.sub(r"\s*```$", "", raw)
+
+    extracted = json.loads(raw)
+    extracted["filename"] = filename
+
+    unknown_products = extracted.get("unknown_products", [])
+    if unknown_products:
+        _handle_unknown_products(unknown_products)
+
+    return extracted
 
 
 # ── Main dispatcher ────────────────────────────────────────────────────────────
 
 def extract_invoice(pdf_path: str) -> dict:
-    """
-    Extract all entities from any invoice PDF.
-    Auto-detects supplier vs customer invoice type.
-    """
+    """Extract all entities from any invoice PDF using Claude AI."""
     text = extract_text(pdf_path)
     filename = Path(pdf_path).name
-    invoice_type = _detect_invoice_type(text)
-
-    if invoice_type == "supplier":
-        return extract_supplier_invoice(text, filename)
-    elif invoice_type == "customer":
-        return extract_customer_invoice(text, filename)
-    else:
+    try:
+        return extract_invoice_with_ai(text, filename)
+    except Exception as e:
+        print(f"  [ERROR] AI extraction failed for {filename}: {e}")
         return {"filename": filename, "invoice_type": "unknown", "raw_text": text}
 
 
@@ -202,23 +170,24 @@ def extract_all(folder: str) -> list:
     pdfs = sorted(Path(folder).glob("*.pdf"))
     print(f"Found {len(pdfs)} PDFs in {folder}")
     for pdf in pdfs:
+        print(f"  Extracting {pdf.name}...")
         result = extract_invoice(str(pdf))
         results.append(result)
         inv_num = result.get("invoice_number", "???")
-        supplier_or_customer = (result.get("supplier_name") or
-                                result.get("customer_name") or "???")
+        counterparty = result.get("supplier_name") or result.get("customer_name") or "???"
         n_items = len(result.get("line_items", []))
         total = result.get("grand_total", 0)
-        print(f"  {inv_num:<12}  {supplier_or_customer:<40}  "
-              f"{n_items} item(s)  ${total:>10,.2f}")
+        print(f"  {inv_num:<12}  {counterparty:<40}  {n_items} item(s)  ${total:>10,.2f}")
     return results
 
 
 # ── Run ────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    supplier_dir = "/mnt/user-data/outputs/invoices"
-    customer_dir = "/mnt/user-data/outputs/customer_invoices"
+    supplier_dir = "../data/invoices"
+    customer_dir = "../data/customer_invoices"
+
+    init_db()
 
     print("=" * 72)
     print("SUPPLIER INVOICES")
@@ -233,17 +202,16 @@ if __name__ == "__main__":
 
     all_results = supplier_results + customer_results
 
-    # Save to JSON so you can inspect everything
-    output_path = "extracted_invoices.json"
-    with open(output_path, "w") as f:
-        json.dump(all_results, f, indent=2)
+    saved = 0
+    for inv in all_results:
+        save_invoice(inv)
+        saved += 1
 
     print()
     print("=" * 72)
-    print(f"Done. {len(all_results)} invoices extracted.")
-    print(f"Full results saved to {output_path}")
-    print()
+    print(f"Done. {len(all_results)} invoices extracted, {saved} saved to SQLite.")
 
-    # Show one example in full
-    print("SAMPLE — first supplier invoice:")
-    print(json.dumps(supplier_results[0], indent=2))
+    if supplier_results:
+        print()
+        print("SAMPLE — first supplier invoice:")
+        print(json.dumps(supplier_results[0], indent=2))

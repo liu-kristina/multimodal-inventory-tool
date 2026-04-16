@@ -43,12 +43,7 @@ sidebar = dbc.Nav(
             active="exact",
             className="px-3 py-2",
         ),
-        dbc.NavLink(
-            "Upload Invoice",
-            href="/upload",
-            active="exact",
-            className="px-3 py-2",
-        ),
+
     ],
     vertical=True,
     pills=True,
