@@ -43,6 +43,11 @@ sidebar = dbc.Nav(
             active="exact",
             className="px-3 py-2",
         ),
+        dbc.NavLink(
+            "Agent Control",  
+            href="/agent-control",  
+            active="exact", 
+            className="px-3 py-2"),
 
     ],
     vertical=True,
