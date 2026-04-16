@@ -1,6 +1,6 @@
 """
 pages/agent_control.py — Agent Control page
-Toggle the invoice agent on/off, run commands, view logs.
+Toggle the invoice agent, run commands, view logs and flags.
 """
 
 import dash
@@ -8,10 +8,11 @@ from dash import html, dcc, Input, Output, State, callback
 import dash_bootstrap_components as dbc
 import os
 import sys
+from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from database import get_connection
-from invoice_agent import start_watch, stop_watch, is_running, run_agent, run_once
+from invoice_agent import start_watch, stop_watch, is_running, run_agent
 
 dash.register_page(__name__, path="/agent-control", name="Agent Control")
 
@@ -54,6 +55,29 @@ def get_run_log(limit=10):
     return [dict(r) for r in rows]
 
 
+def get_flags(resolved=False):
+    conn = get_connection()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_flags (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                reason     TEXT,
+                details    TEXT,
+                resolved   INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        rows = conn.execute(
+            "SELECT * FROM agent_flags WHERE resolved=? ORDER BY created_at DESC",
+            (1 if resolved else 0,)
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        conn.close()
+        return []
+
+
 def get_stats():
     conn = get_connection()
     try:
@@ -66,11 +90,15 @@ def get_stats():
         ).fetchone()[0]
     except Exception:
         alerts = 0
+    try:
+        flags = conn.execute(
+            "SELECT COUNT(*) FROM agent_flags WHERE resolved=0"
+        ).fetchone()[0]
+    except Exception:
+        flags = 0
     conn.close()
-    return {"invoices": invoices, "alerts": alerts}
+    return {"invoices": invoices, "alerts": alerts, "flags": flags}
 
-
-from datetime import datetime
 
 def log_run(message, status="ok"):
     conn = get_connection()
@@ -92,8 +120,9 @@ def log_run(message, status="ok"):
 def layout():
     state  = get_agent_state()
     logs   = get_run_log()
+    flags  = get_flags(resolved=False)
     stats  = get_stats()
-    active = is_running()  # use live thread state, not just DB
+    active = is_running()
 
     label_style = {
         "fontSize": "11px",
@@ -103,6 +132,22 @@ def layout():
         "color": "var(--bs-secondary)",
         "marginBottom": "8px",
     }
+
+    def flag_card(f):
+        return dbc.Row([
+            dbc.Col(html.Span("●", style={"color": "#E24B4A", "fontSize": "10px"}), width="auto"),
+            dbc.Col([
+                html.P(f["reason"], className="mb-0 fw-500", style={"fontSize": "13px"}),
+                html.Small(f.get("details", ""), className="text-muted d-block"),
+                html.Small(f["created_at"], className="text-muted"),
+            ]),
+            dbc.Col(
+                dbc.Button("Resolve", size="sm", outline=True, color="secondary",
+                           id={"type": "resolve-btn", "index": f["id"]},
+                           className="float-end"),
+                width="auto"
+            ),
+        ], align="start", className="mb-3")
 
     return dbc.Container([
 
@@ -150,12 +195,32 @@ def layout():
             dbc.Col(dbc.Card(dbc.CardBody([
                 html.H4(stats["invoices"], className="mb-0"),
                 html.Small("Invoices indexed", className="text-muted"),
-            ])), width=4),
+            ])), width=3),
             dbc.Col(dbc.Card(dbc.CardBody([
                 html.H4(stats["alerts"], className="mb-0"),
                 html.Small("Stock alerts", className="text-muted"),
-            ])), width=4),
+            ])), width=3),
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.H4(
+                    stats["flags"],
+                    className="mb-0",
+                    style={"color": "#E24B4A"} if stats["flags"] > 0 else {}
+                ),
+                html.Small("Needs review", className="text-muted"),
+            ])), width=3),
         ], className="mb-3 g-2"),
+
+        # ── Flags for review ──
+        html.P("Needs review", style=label_style),
+        dbc.Card([
+            dbc.CardBody([
+                html.Div(id="flags-container", children=[
+                    *[flag_card(f) for f in flags],
+                ] if flags else [
+                    html.Small("No items flagged for review.", className="text-muted")
+                ])
+            ])
+        ], className="mb-3"),
 
         # ── Command input ──
         html.P("Send a command", style=label_style),
@@ -207,8 +272,8 @@ def layout():
             ])
         ]),
 
-        # Feedback div (unused visually but needed for callbacks)
         html.Div(id="toggle-feedback"),
+        html.Div(id="resolve-feedback"),
 
     ], fluid=True)
 
@@ -221,22 +286,12 @@ def layout():
     prevent_initial_call=True,
 )
 def toggle_agent(active):
-    if active:
-        msg = start_watch()
-        status = "ok"
-    else:
-        msg = stop_watch()
-        status = "ok"
-
-    # Persist to DB
+    msg = start_watch() if active else stop_watch()
     conn = get_connection()
-    conn.execute(
-        "UPDATE agent_state SET active=? WHERE id=1", (1 if active else 0,)
-    )
+    conn.execute("UPDATE agent_state SET active=? WHERE id=1", (1 if active else 0,))
     conn.commit()
     conn.close()
-
-    log_run(msg, status)
+    log_run(msg)
     return ""
 
 
@@ -248,11 +303,7 @@ def toggle_agent(active):
 )
 def fill_command(s, g):
     ctx = dash.callback_context.triggered_id
-    cmds = {
-        "btn-stock": "check low stock",
-        "btn-gmail": "check gmail",
-    }
-    return cmds.get(ctx, "")
+    return {"btn-stock": "check low stock", "btn-gmail": "check gmail"}.get(ctx, "")
 
 
 @callback(
@@ -264,7 +315,23 @@ def fill_command(s, g):
 def run_command(n, command):
     if not command:
         return "Please enter a command."
-
     result = run_agent(command)
-    log_run(f"Command: {command[:60]}", "ok")
+    log_run(f"Command: {command[:60]}")
     return result
+
+
+@callback(
+    Output("resolve-feedback", "children"),
+    Input({"type": "resolve-btn", "index": dash.ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def resolve_flag(n_clicks):
+    if not any(n_clicks):
+        return ""
+    flag_id = dash.callback_context.triggered_id["index"]
+    conn = get_connection()
+    conn.execute("UPDATE agent_flags SET resolved=1 WHERE id=?", (flag_id,))
+    conn.commit()
+    conn.close()
+    return ""
+
