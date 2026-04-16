@@ -9,6 +9,9 @@ import plotly.graph_objects as go
 import sqlite3
 import json
 import os
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from database import get_connection
 
 dash.register_page(__name__, path="/inventory", title="Inventory")
 

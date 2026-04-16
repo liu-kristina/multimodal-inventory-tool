@@ -29,7 +29,7 @@ load_dotenv()
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-CHROMA_DIR       = "chroma_db"
+CHROMA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "chroma_db")
 COLLECTION_NAME  = "invoices"
 OPENAI_MODEL     = "text-embedding-3-small"
 CLAUDE_MODEL     = "claude-sonnet-4-6"
