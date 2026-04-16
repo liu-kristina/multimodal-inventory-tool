@@ -25,6 +25,7 @@ import sys
 import time
 import tempfile
 import threading
+import shutil
 from email.header import decode_header
 from pathlib import Path
 from dotenv import load_dotenv
@@ -43,6 +44,7 @@ GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 GMAIL_LABEL        = "invoices"
 IMAP_SERVER        = "imap.gmail.com"
 POLL_INTERVAL      = 300  # seconds (5 minutes — change to 86400 for production)
+INVOICE_SAVE_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "invoices")
 
 
 # ── Gmail connection ───────────────────────────────────────────────────────────
@@ -64,7 +66,7 @@ def get_unprocessed_emails(mail):
 
 
 def extract_pdfs_from_email(mail, message_id) -> list:
-    """Download all PDF attachments from an email. Returns list of temp file paths."""
+    """Download all PDF attachments from an email. Returns list of (tmp_path, filename) tuples."""
     _, msg_data = mail.fetch(message_id, "(RFC822)")
     raw_email = msg_data[0][1]
     msg = email.message_from_bytes(raw_email)
@@ -75,7 +77,7 @@ def extract_pdfs_from_email(mail, message_id) -> list:
     sender = msg.get("From", "unknown")
     print(f"  Processing: '{subject}' from {sender}")
 
-    pdf_paths = []
+    pdf_files = []
     for part in msg.walk():
         if part.get_content_type() == "application/pdf":
             filename = part.get_filename()
@@ -91,10 +93,10 @@ def extract_pdfs_from_email(mail, message_id) -> list:
                 )
                 tmp.write(part.get_payload(decode=True))
                 tmp.close()
-                pdf_paths.append(tmp.name)
+                pdf_files.append((tmp.name, filename))
                 print(f"    Found PDF: {filename}")
 
-    return pdf_paths
+    return pdf_files
 
 
 def mark_as_read(mail, message_id):
@@ -102,14 +104,30 @@ def mark_as_read(mail, message_id):
     mail.store(message_id, "+FLAGS", "\\Seen")
 
 
+# ── Save PDF to disk ───────────────────────────────────────────────────────────
+
+def save_pdf_to_disk(tmp_path: str, filename: str):
+    """Save a copy of the invoice PDF to data/invoices/."""
+    os.makedirs(INVOICE_SAVE_DIR, exist_ok=True)
+    dest = os.path.join(INVOICE_SAVE_DIR, filename)
+    # Avoid overwriting — add timestamp suffix if file already exists
+    if os.path.exists(dest):
+        base, ext = os.path.splitext(filename)
+        dest = os.path.join(INVOICE_SAVE_DIR, f"{base}_{int(time.time())}{ext}")
+    shutil.copy2(tmp_path, dest)
+    print(f"    Saved PDF to: data/invoices/{os.path.basename(dest)}")
+    return dest
+
+
 # ── Stock update ───────────────────────────────────────────────────────────────
 
 def update_stock_from_invoice(extracted: dict):
     """
-    Update stock levels from a supplier invoice.
-    Adds quantity from each line item to the stock table.
+    Update stock levels from an invoice.
+    Supplier invoices ADD stock, customer invoices SUBTRACT stock.
     """
-    if extracted.get("invoice_type") != "supplier":
+    invoice_type = extracted.get("invoice_type")
+    if invoice_type not in ("supplier", "customer"):
         return
 
     conn = get_connection()
@@ -122,15 +140,28 @@ def update_stock_from_invoice(extracted: dict):
         if not product_name or quantity <= 0:
             continue
 
-        conn.execute("""
-            INSERT INTO stock (product_name, quantity_kg, unit_price, last_updated)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(product_name) DO UPDATE SET
-                quantity_kg = quantity_kg + excluded.quantity_kg,
-                unit_price = excluded.unit_price,
-                last_updated = CURRENT_TIMESTAMP
-        """, (product_name, quantity, unit_price))
-        updated.append(f"{product_name} +{quantity}kg")
+        if invoice_type == "supplier":
+            # Incoming stock — add quantity
+            conn.execute("""
+                INSERT INTO stock (product_name, quantity_kg, unit_price, last_updated)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(product_name) DO UPDATE SET
+                    quantity_kg = quantity_kg + excluded.quantity_kg,
+                    unit_price = excluded.unit_price,
+                    last_updated = CURRENT_TIMESTAMP
+            """, (product_name, quantity, unit_price))
+            updated.append(f"{product_name} +{quantity}kg")
+
+        elif invoice_type == "customer":
+            # Outgoing stock — subtract quantity, floor at 0
+            conn.execute("""
+                INSERT INTO stock (product_name, quantity_kg, last_updated)
+                VALUES (?, MAX(0, -?), CURRENT_TIMESTAMP)
+                ON CONFLICT(product_name) DO UPDATE SET
+                    quantity_kg = MAX(0, quantity_kg - excluded.quantity_kg),
+                    last_updated = CURRENT_TIMESTAMP
+            """, (product_name, quantity))
+            updated.append(f"{product_name} -{quantity}kg")
 
     conn.commit()
     conn.close()
@@ -142,42 +173,50 @@ def update_stock_from_invoice(extracted: dict):
 # ── Main pipeline ──────────────────────────────────────────────────────────────
 
 def process_email(mail, message_id):
-    """Full pipeline for a single email: extract → save → update stock → embed."""
-    pdf_paths = extract_pdfs_from_email(mail, message_id)
+    """Full pipeline for a single email: extract → save to disk → save to DB → update stock → embed."""
+    pdf_files = extract_pdfs_from_email(mail, message_id)
 
-    if not pdf_paths:
+    if not pdf_files:
         print("    No PDF attachments found, skipping.")
         mark_as_read(mail, message_id)
         return
 
-    for pdf_path in pdf_paths:
+    for tmp_path, filename in pdf_files:
         try:
+            # Save a copy to data/invoices/
+            save_pdf_to_disk(tmp_path, filename)
+
+            # Extract invoice data using AI
             print(f"    Extracting invoice data...")
-            extracted = extract_invoice(pdf_path)
+            extracted = extract_invoice(tmp_path)
 
             if extracted.get("invoice_type") == "unknown":
                 print(f"    [WARN] Could not determine invoice type, skipping.")
                 continue
 
+            # Save to SQLite
             save_invoice(extracted)
             inv_num = extracted.get("invoice_number", "unknown")
             counterparty = (extracted.get("supplier_name") or
                             extracted.get("customer_name") or "unknown")
             print(f"    Saved invoice {inv_num} from {counterparty}")
 
+            # Update stock if supplier invoice
             update_stock_from_invoice(extracted)
 
         except Exception as e:
-            print(f"    [ERROR] Failed to process {pdf_path}: {e}")
+            print(f"    [ERROR] Failed to process {filename}: {e}")
         finally:
             try:
-                os.unlink(pdf_path)
+                os.unlink(tmp_path)
             except Exception:
                 pass
 
+    # Embed any new invoices into ChromaDB
     print(f"    Embedding new invoices into ChromaDB...")
     embed_new_invoices()
 
+    # Mark email as read
     mark_as_read(mail, message_id)
 
 
