@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# Environment
+.env
+.venv/
+venv/
+env/
+
+# Data — mounted as volumes, not baked in
+data/
+chroma_db/
+inventory.db
+
+# Dev tools
+.git/
+.gitignore
+*.md
+tests/
+
+# macOS
+.DS_Store
+
+# Conda
+anaconda3/

@@ -6,10 +6,8 @@ import dash
 from dash import html, dcc, Input, Output, State, callback
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
-import sqlite3
-import json
 import os
-import sys, os
+import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from database import get_connection
 
@@ -18,8 +16,7 @@ dash.register_page(__name__, path="/inventory", title="Inventory")
 # ── Database ───────────────────────────────────────────────────────────────────
 
 def get_inventory():
-    conn = sqlite3.connect("inventory.db")
-    conn.row_factory = sqlite3.Row
+    conn = get_connection()
     rows = conn.execute("SELECT * FROM stock ORDER BY product_name").fetchall()
     conn.close()
     return [
@@ -40,8 +37,7 @@ def get_low_stock():
 def get_pending_products():
     """Return products flagged by the invoice agent as unknown."""
     try:
-        conn = sqlite3.connect("inventory.db")
-        conn.row_factory = sqlite3.Row
+        conn = get_connection()
         rows = conn.execute("""
             SELECT * FROM pending_products WHERE status = 'pending' ORDER BY created_at DESC
         """).fetchall()
@@ -53,7 +49,7 @@ def get_pending_products():
 
 def approve_pending_product(product_name: str):
     """Move a pending product into the products table and mark as approved."""
-    conn = sqlite3.connect("inventory.db")
+    conn = get_connection()
     conn.execute("INSERT OR IGNORE INTO products (product_name) VALUES (?)", (product_name,))
     conn.execute("UPDATE pending_products SET status = 'approved' WHERE product_name = ?", (product_name,))
     conn.commit()
@@ -62,7 +58,7 @@ def approve_pending_product(product_name: str):
 
 def dismiss_pending_product(product_name: str):
     """Dismiss a pending product without adding it."""
-    conn = sqlite3.connect("inventory.db")
+    conn = get_connection()
     conn.execute("UPDATE pending_products SET status = 'dismissed' WHERE product_name = ?", (product_name,))
     conn.commit()
     conn.close()
@@ -73,14 +69,14 @@ def setup_db():
     Run manually from terminal when needed:
         python3 -c "from pages.inventory import setup_db; setup_db()"
     """
-    conn = sqlite3.connect("inventory.db")
+    conn = get_connection()
     try:
         conn.execute("ALTER TABLE stock ADD COLUMN reorder_at REAL DEFAULT 0")
-    except sqlite3.OperationalError:
+    except Exception:
         pass  # column already exists
     try:
         conn.execute("ALTER TABLE stock ADD COLUMN unit TEXT DEFAULT 'kg'")
-    except sqlite3.OperationalError:
+    except Exception:
         pass  # column already exists
 
     reorder_thresholds = [
@@ -308,4 +304,3 @@ def handle_pending_action(approve_clicks, dismiss_clicks):
 
     # Re-render the section
     return render_pending_products(None)
-

@@ -1,12 +1,15 @@
 """
-Invoice Agent — a real Claude-powered agent that monitors Gmail for invoices,
-decides what to do with each one, and updates stock autonomously.
+Invoice Agent — California Nutraceuticals
+Automation pipeline for invoice processing.
+Claude is only called when there is genuine ambiguity:
+  - Unknown products that need matching
+  - Price anomalies (>50% change from historical)
 
-Claude receives a goal and a set of tools, and decides which tools to call
-and in what order — rather than following a fixed hardcoded pipeline.
+Normal clean invoices: ~$0.003 (extraction only)
+Invoices with anomalies: ~$0.01-0.02 (extraction + one focused check)
 
 Setup:
-    pip install anthropic python-dotenv
+    pip install anthropic imaplib2 python-dotenv
 
 Add to your .env file:
     GMAIL_ADDRESS=your@gmail.com
@@ -20,6 +23,7 @@ Or run manually: python invoice_agent.py
 import imaplib
 import email
 import os
+import re
 import sys
 import time
 import json
@@ -38,15 +42,54 @@ from database import init_db, save_invoice, get_connection
 from pipeline.pdf_extractor import extract_invoice
 from pipeline.generate_embeddings import embed_new_invoices
 
+# ── Filename convention ────────────────────────────────────────────────────────
+
+def _clean(s: str, max_len: int = 30) -> str:
+    """Remove special chars, replace spaces with hyphens, cap length."""
+    s = str(s).strip()
+    s = re.sub(r"[^\w\s-]", "", s)
+    s = re.sub(r"\s+", "-", s)
+    s = re.sub(r"-+", "-", s)
+    return s[:max_len].strip("-")
+
+
+def _clean_date(date_str: str) -> str:
+    """Sanitize date string without capping — preserves full year e.g. 12-Nov-2026."""
+    s = str(date_str).strip()
+    s = re.sub(r"[^\w-]", "", s)
+    return s
+
+
+def build_canonical_filename(extracted: dict) -> str:
+    """
+    Build standardised filename from extracted invoice data.
+    Convention: {type}_{counterparty}_{date}_{invoice_number}.pdf
+    e.g. supplier_Jiaxing-Natural-Products-Ltd_12-Nov-2026_INV-0034.pdf
+    """
+    inv_type     = extracted.get("invoice_type", "unknown")
+    counterparty = (extracted.get("supplier_name") or
+                    extracted.get("customer_name") or "unknown")
+    date         = extracted.get("invoice_date", "nodate")
+    inv_number   = extracted.get("invoice_number", "noinv")
+
+    return (
+        f"{inv_type}"
+        f"_{_clean(counterparty, max_len=30)}"
+        f"_{_clean_date(date)}"
+        f"_{_clean(inv_number, max_len=20)}"
+        f".pdf"
+    )
+
+
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 GMAIL_ADDRESS      = os.getenv("GMAIL_ADDRESS")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 GMAIL_LABEL        = "invoices"
 IMAP_SERVER        = "imap.gmail.com"
-POLL_INTERVAL      = 300  # seconds — change to 86400 for production
+POLL_INTERVAL      = 300        # seconds — change to 86400 for production
+PRICE_ANOMALY_PCT  = 0.50       # flag if price changes by more than 50%
 INVOICE_SAVE_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "invoices")
-CUSTOMER_SAVE_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "customer_invoices")
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -96,83 +139,118 @@ def mark_as_read(mail, message_id):
     mail.store(message_id, "+FLAGS", "\\Seen")
 
 
-# ── Agent tools ────────────────────────────────────────────────────────────────
+# ── Free checks (no Claude) ────────────────────────────────────────────────────
 
-def tool_extract_invoice(pdf_path: str) -> dict:
-    return extract_invoice(pdf_path)
-
-
-def tool_get_stock_levels() -> list:
+def is_duplicate(invoice_number: str) -> bool:
+    """Check if invoice number already exists in the database."""
+    if not invoice_number or invoice_number.startswith("unknown_"):
+        return False
     conn = get_connection()
-    rows = conn.execute(
-        "SELECT product_name, quantity_kg, reorder_at, unit, supplier FROM stock ORDER BY product_name"
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-
-def tool_update_stock(product_name: str, quantity: float, direction: str, unit_price: float = None) -> str:
-    conn = get_connection()
-    if direction == "add":
-        conn.execute("""
-            INSERT INTO stock (product_name, quantity_kg, unit_price, last_updated)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(product_name) DO UPDATE SET
-                quantity_kg = quantity_kg + excluded.quantity_kg,
-                unit_price = COALESCE(excluded.unit_price, unit_price),
-                last_updated = CURRENT_TIMESTAMP
-        """, (product_name, quantity, unit_price))
-        result = f"Added {quantity}kg of {product_name} to stock."
-    elif direction == "subtract":
-        conn.execute("""
-            INSERT INTO stock (product_name, quantity_kg, last_updated)
-            VALUES (?, MAX(0, -?), CURRENT_TIMESTAMP)
-            ON CONFLICT(product_name) DO UPDATE SET
-                quantity_kg = MAX(0, quantity_kg - excluded.quantity_kg),
-                last_updated = CURRENT_TIMESTAMP
-        """, (product_name, quantity))
-        result = f"Subtracted {quantity}kg of {product_name} from stock."
-    else:
+    try:
+        row = conn.execute(
+            "SELECT id FROM invoices WHERE invoice_number = ?",
+            (invoice_number,)
+        ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+    finally:
         conn.close()
-        return f"Unknown direction '{direction}'."
+
+
+def get_price_anomalies(extracted: dict) -> list:
+    """
+    Compare invoice line item prices against historical prices in stock table.
+    Returns list of anomaly dicts for any item with >PRICE_ANOMALY_PCT change.
+    Free — no Claude call needed.
+    """
+    anomalies = []
+    conn = get_connection()
+    for item in extracted.get("line_items", []):
+        product = item.get("product", "")
+        invoice_price = float(item.get("unit_price", 0))
+        if not product or invoice_price <= 0:
+            continue
+        row = conn.execute(
+            "SELECT unit_price FROM stock WHERE product_name = ?", (product,)
+        ).fetchone()
+        if row and row["unit_price"] and row["unit_price"] > 0:
+            ratio = invoice_price / row["unit_price"]
+            if ratio > (1 + PRICE_ANOMALY_PCT) or ratio < (1 - PRICE_ANOMALY_PCT):
+                anomalies.append({
+                    "product": product,
+                    "historical_price": row["unit_price"],
+                    "invoice_price": invoice_price,
+                    "change_pct": round((ratio - 1) * 100, 1),
+                })
+    conn.close()
+    return anomalies
+
+
+def get_unknown_products(extracted: dict) -> list:
+    """Return line items flagged as unknown products by the extractor."""
+    return [
+        item.get("product", "")
+        for item in extracted.get("line_items", [])
+        if item.get("is_unknown_product")
+    ]
+
+
+# ── Stock update (free, no Claude) ────────────────────────────────────────────
+
+def update_stock(extracted: dict):
+    """
+    Update stock levels from an invoice.
+    Supplier invoices ADD stock, customer invoices SUBTRACT stock.
+    No Claude call — pure automation.
+    """
+    invoice_type = extracted.get("invoice_type")
+    if invoice_type not in ("supplier", "customer"):
+        return
+
+    conn = get_connection()
+    updated = []
+
+    for item in extracted.get("line_items", []):
+        product_name = item.get("product", "")
+        quantity = float(item.get("quantity", 0))
+        unit_price = float(item.get("unit_price", 0))
+
+        if not product_name or quantity <= 0:
+            continue
+
+        if invoice_type == "supplier":
+            conn.execute("""
+                INSERT INTO stock (product_name, quantity_kg, unit_price, last_updated)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(product_name) DO UPDATE SET
+                    quantity_kg = quantity_kg + excluded.quantity_kg,
+                    unit_price = excluded.unit_price,
+                    last_updated = CURRENT_TIMESTAMP
+            """, (product_name, quantity, unit_price))
+            updated.append(f"{product_name} +{quantity}kg")
+
+        elif invoice_type == "customer":
+            conn.execute("""
+                INSERT INTO stock (product_name, quantity_kg, last_updated)
+                VALUES (?, MAX(0, -?), CURRENT_TIMESTAMP)
+                ON CONFLICT(product_name) DO UPDATE SET
+                    quantity_kg = MAX(0, quantity_kg - excluded.quantity_kg),
+                    last_updated = CURRENT_TIMESTAMP
+            """, (product_name, quantity))
+            updated.append(f"{product_name} -{quantity}kg")
+
     conn.commit()
     conn.close()
-    return result
+
+    if updated:
+        print(f"    Stock updated: {', '.join(updated)}")
 
 
-def tool_save_invoice(extracted: dict) -> str:
-    try:
-        save_invoice(extracted)
-        return f"Invoice {extracted.get('invoice_number', 'unknown')} saved."
-    except Exception as e:
-        return f"Failed to save invoice: {e}"
+# ── Flag for review (free) ─────────────────────────────────────────────────────
 
-
-def tool_save_pdf(tmp_path: str, filename: str) -> str:
-    if filename.startswith("customer_invoice"):
-        save_dir = CUSTOMER_SAVE_DIR
-        label = "data/customer_invoices"
-    else:
-        save_dir = INVOICE_SAVE_DIR
-        label = "data/invoices"
-    os.makedirs(save_dir, exist_ok=True)
-    dest = os.path.join(save_dir, filename)
-    if os.path.exists(dest):
-        base, ext = os.path.splitext(filename)
-        dest = os.path.join(save_dir, f"{base}_{int(time.time())}{ext}")
-    shutil.copy2(tmp_path, dest)
-    return f"PDF saved to {label}/{os.path.basename(dest)}"
-
-
-def tool_embed_invoices() -> str:
-    try:
-        embed_new_invoices()
-        return "Invoices embedded into ChromaDB."
-    except Exception as e:
-        return f"Embedding failed: {e}"
-
-
-def tool_flag_for_review(reason: str, details: str = "") -> str:
+def flag_for_review(reason: str, details: str = ""):
+    """Log an item to agent_flags table for display in Agent Control page."""
     conn = get_connection()
     conn.execute("""
         CREATE TABLE IF NOT EXISTS agent_flags (
@@ -189,216 +267,176 @@ def tool_flag_for_review(reason: str, details: str = "") -> str:
     )
     conn.commit()
     conn.close()
-    return f"Flagged for review: {reason}"
+    print(f"    Flagged: {reason}")
 
 
-def tool_check_duplicate(invoice_number: str) -> str:
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            "SELECT id FROM invoices WHERE invoice_number = ?", (invoice_number,)
-        ).fetchone()
-        conn.close()
-        if row:
-            return f"DUPLICATE: Invoice {invoice_number} already exists."
-        return f"Invoice {invoice_number} is new."
-    except Exception:
-        conn.close()
-        return "Could not check duplicates — invoices table may not exist yet."
+# ── Save PDF to disk (free) ────────────────────────────────────────────────────
+
+def save_pdf_to_disk(tmp_path: str, filename: str, extracted: dict = None) -> str:
+    """
+    Save PDF to disk using the canonical naming convention if extracted data
+    is provided, otherwise fall back to the original filename.
+    Returns the final saved path.
+    """
+    os.makedirs(INVOICE_SAVE_DIR, exist_ok=True)
+
+    if extracted:
+        canonical = build_canonical_filename(extracted)
+        if canonical != filename:
+            print(f"    Renaming: {filename} → {canonical}")
+        filename = canonical
+
+    dest = os.path.join(INVOICE_SAVE_DIR, filename)
+    if os.path.exists(dest):
+        base, ext = os.path.splitext(filename)
+        dest = os.path.join(INVOICE_SAVE_DIR, f"{base}_{int(time.time())}{ext}")
+
+    shutil.copy2(tmp_path, dest)
+    print(f"    Saved PDF: data/invoices/{os.path.basename(dest)}")
+    return dest
 
 
-# ── Tool definitions for Claude API ───────────────────────────────────────────
+# ── Claude anomaly check (only called when needed) ────────────────────────────
 
-TOOLS = [
-    {
-        "name": "extract_invoice",
-        "description": "Extract structured data from a PDF invoice file — invoice number, type (supplier/customer), line items, totals.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "pdf_path": {"type": "string", "description": "Path to the PDF temp file"}
-            },
-            "required": ["pdf_path"]
-        }
-    },
-    {
-        "name": "get_stock_levels",
-        "description": "Get current stock levels for all products from the database.",
-        "input_schema": {"type": "object", "properties": {}}
-    },
-    {
-        "name": "update_stock",
-        "description": "Update stock quantity for a product. Use 'add' for supplier invoices (incoming), 'subtract' for customer invoices (outgoing).",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "product_name": {"type": "string"},
-                "quantity":     {"type": "number"},
-                "direction":    {"type": "string", "enum": ["add", "subtract"]},
-                "unit_price":   {"type": "number", "description": "Optional — for supplier invoices"}
-            },
-            "required": ["product_name", "quantity", "direction"]
-        }
-    },
-    {
-        "name": "save_invoice",
-        "description": "Save the extracted invoice data to the SQLite database.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "extracted": {"type": "object", "description": "The extracted invoice data dict"}
-            },
-            "required": ["extracted"]
-        }
-    },
-    {
-        "name": "save_pdf",
-        "description": "Save the invoice PDF permanently to the data/invoices/ folder.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "tmp_path": {"type": "string"},
-                "filename": {"type": "string"}
-            },
-            "required": ["tmp_path", "filename"]
-        }
-    },
-    {
-        "name": "embed_invoices",
-        "description": "Embed newly saved invoices into ChromaDB so they appear in RAG chat queries.",
-        "input_schema": {"type": "object", "properties": {}}
-    },
-    {
-        "name": "flag_for_review",
-        "description": "Flag an invoice for human review — shown in the Agent Control page. Use when invoice type is unknown, data is missing, a duplicate is detected, or anything looks suspicious.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "reason":  {"type": "string", "description": "Short reason for flagging"},
-                "details": {"type": "string", "description": "More detail about the issue"}
-            },
-            "required": ["reason"]
-        }
-    },
-    {
-        "name": "check_duplicate",
-        "description": "Check if an invoice number has already been processed to avoid double-counting stock.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "invoice_number": {"type": "string"}
-            },
-            "required": ["invoice_number"]
-        }
-    }
-]
+ANOMALY_PROMPT = """You are reviewing an invoice for California Nutraceuticals.
+The automated system flagged the following issues. Assess each one and decide:
+1. Is this a real problem or likely a typo/rounding/currency difference?
+2. Should it be flagged for human review or is it safe to proceed?
 
+Return ONLY valid JSON — no preamble, no markdown:
+{{
+  "safe_to_proceed": true or false,
+  "flags": [
+    {{"issue": "short description", "severity": "low/medium/high", "recommendation": "what to do"}}
+  ]
+}}
 
-# ── Tool executor ──────────────────────────────────────────────────────────────
+Invoice number: {invoice_number}
+Invoice type: {invoice_type}
+Counterparty: {counterparty}
 
-def execute_tool(name: str, inputs: dict) -> str:
-    print(f"    → {name}({str(inputs)[:80]})")
-
-    if name == "extract_invoice":
-        return json.dumps(tool_extract_invoice(inputs["pdf_path"]), default=str)
-    elif name == "get_stock_levels":
-        return json.dumps(tool_get_stock_levels(), default=str)
-    elif name == "update_stock":
-        return tool_update_stock(inputs["product_name"], inputs["quantity"],
-                                  inputs["direction"], inputs.get("unit_price"))
-    elif name == "save_invoice":
-        return tool_save_invoice(inputs["extracted"])
-    elif name == "save_pdf":
-        return tool_save_pdf(inputs["tmp_path"], inputs["filename"])
-    elif name == "embed_invoices":
-        return tool_embed_invoices()
-    elif name == "flag_for_review":
-        return tool_flag_for_review(inputs["reason"], inputs.get("details", ""))
-    elif name == "check_duplicate":
-        return tool_check_duplicate(inputs["invoice_number"])
-    else:
-        return f"Unknown tool: {name}"
-
-
-# ── Claude agent loop ──────────────────────────────────────────────────────────
-
-SYSTEM_PROMPT = """
-You are an inventory agent for California Nutraceuticals Inc, a raw material distributor.
-Your job is to process invoice PDFs and keep the stock database accurate.
-
-For each invoice PDF you must:
-1. Save the PDF to disk for permanent storage
-2. Extract the invoice data
-3. Check for duplicates using the invoice number
-4. Save the invoice to the database
-5. Update stock levels — ADD for supplier invoices, SUBTRACT for customer invoices
-   - Process each line item individually
-6. Embed invoices into ChromaDB after all processing
-7. Flag anything unusual for human review
-
-Flag for review when:
-- Invoice type cannot be determined
-- Line items are missing or empty
-- This is a duplicate invoice number
-- A product being subtracted does not exist in stock
-- Any data looks corrupt or incomplete
-
-Be thorough. The accuracy of the inventory depends entirely on you.
+Issues found:
+{issues}
 """
 
 
-def run_agent_on_pdf(tmp_path: str, filename: str) -> str:
-    """Run the Claude agent on a single PDF. Returns a summary of what was done."""
-    messages = [{
-        "role": "user",
-        "content": (
-            f"Process this invoice PDF completely.\n"
-            f"Temp file path: {tmp_path}\n"
-            f"Original filename: {filename}\n\n"
-            f"Save the PDF, extract data, check for duplicates, save to database, "
-            f"update stock for every line item, then embed. Flag anything unusual."
-        )
-    }]
-
-    print(f"\n  Agent processing: {filename}")
-
-    while True:
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=4096,
-            system=SYSTEM_PROMPT,
-            tools=TOOLS,
-            messages=messages,
+def claude_anomaly_check(extracted: dict, anomalies: list, unknown_products: list) -> dict:
+    """
+    Single focused Claude call — only runs when anomalies or unknown products exist.
+    Returns dict with safe_to_proceed bool and list of flags.
+    """
+    issues = []
+    if unknown_products:
+        issues.append(f"Unknown products not in database: {', '.join(unknown_products)}")
+    for a in anomalies:
+        direction = "increase" if a["change_pct"] > 0 else "decrease"
+        issues.append(
+            f"{a['product']}: price {direction} of {abs(a['change_pct'])}% "
+            f"(was ${a['historical_price']}/kg, now ${a['invoice_price']}/kg)"
         )
 
-        messages.append({"role": "assistant", "content": response.content})
+    prompt = ANOMALY_PROMPT.format(
+        invoice_number=extracted.get("invoice_number", "unknown"),
+        invoice_type=extracted.get("invoice_type", "unknown"),
+        counterparty=extracted.get("supplier_name") or extracted.get("customer_name") or "unknown",
+        issues="\n".join(f"- {i}" for i in issues),
+    )
 
-        if response.stop_reason == "end_turn":
-            return " ".join(
-                block.text for block in response.content if hasattr(block, "text")
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",  # cheapest model — sufficient for this task
+        max_tokens=500,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw = response.content[0].text.strip()
+    raw = raw.replace("```json", "").replace("```", "").strip()
+    return json.loads(raw)
+
+
+# ── Main invoice pipeline ──────────────────────────────────────────────────────
+
+def process_invoice(tmp_path: str, filename: str):
+    """
+    Full pipeline for one invoice PDF.
+    Claude is only called if unknown products or price anomalies are detected.
+    """
+    print(f"\n  Processing: {filename}")
+
+    # 1. Extract invoice data first — needed for canonical filename
+    print(f"    Extracting invoice data...")
+    extracted = extract_invoice(tmp_path)
+
+    # 2. Save PDF to disk with canonical filename — free
+    save_pdf_to_disk(tmp_path, filename, extracted=extracted)
+
+    invoice_number = extracted.get("invoice_number", "unknown")
+    invoice_type   = extracted.get("invoice_type", "unknown")
+
+    # 3. Check invoice type — free
+    if invoice_type == "unknown":
+        flag_for_review(
+            f"Unknown invoice type: {filename}",
+            "Could not determine if supplier or customer invoice."
+        )
+        return
+
+    # 4. Check for duplicate — free
+    if is_duplicate(invoice_number):
+        flag_for_review(
+            f"Duplicate invoice: {invoice_number}",
+            f"Invoice {invoice_number} from {filename} already exists in database."
+        )
+        return
+
+    # 5. Check for anomalies — free
+    anomalies        = get_price_anomalies(extracted)
+    unknown_products = get_unknown_products(extracted)
+
+    # 6. Claude anomaly check — only if needed
+    if anomalies or unknown_products:
+        print(f"    Anomalies detected — running Claude check...")
+        try:
+            result = claude_anomaly_check(extracted, anomalies, unknown_products)
+
+            # Log each flag from Claude
+            for f in result.get("flags", []):
+                flag_for_review(
+                    f"{f['severity'].upper()}: {f['issue']}",
+                    f"Recommendation: {f['recommendation']} (Invoice: {invoice_number})"
+                )
+
+            # If Claude says not safe to proceed, stop here
+            if not result.get("safe_to_proceed", True):
+                print(f"    Claude flagged invoice {invoice_number} — skipping stock update.")
+                save_invoice(extracted)  # save record but don't update stock
+                return
+
+        except Exception as e:
+            # If Claude check fails, flag it and continue cautiously
+            flag_for_review(
+                f"Anomaly check failed: {invoice_number}",
+                f"Error: {e}. Manual review recommended."
             )
 
-        if response.stop_reason == "tool_use":
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    result = execute_tool(block.name, block.input)
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result,
-                    })
-            messages.append({"role": "user", "content": tool_results})
-        else:
-            break
+    # 7. Save invoice to SQLite — free
+    save_invoice(extracted)
+    counterparty = extracted.get("supplier_name") or extracted.get("customer_name") or "unknown"
+    print(f"    Saved invoice {invoice_number} from {counterparty}")
 
-    return "Agent completed."
+    # 8. Update stock — free
+    update_stock(extracted)
+
+    # 9. Embed into ChromaDB — cheap
+    print(f"    Embedding into ChromaDB...")
+    embed_new_invoices()
+
+    print(f"    Done.")
 
 
-# ── Main run ───────────────────────────────────────────────────────────────────
+# ── Gmail run ──────────────────────────────────────────────────────────────────
 
 def run_once() -> str:
-    """Check Gmail once and run the agent on each unread invoice email."""
+    """Check Gmail once and process all unread invoice emails."""
     print("=" * 60)
     print("Invoice Agent — checking Gmail...")
     print("=" * 60)
@@ -407,7 +445,8 @@ def run_once() -> str:
         return "ERROR: GMAIL_ADDRESS and GMAIL_APP_PASSWORD must be set in .env"
 
     init_db()
-    summaries = []
+    processed = 0
+    errors    = 0
 
     try:
         mail = connect_gmail()
@@ -423,19 +462,19 @@ def run_once() -> str:
 
         for message_id in message_ids:
             pdf_files = download_pdfs(mail, message_id)
+
             if not pdf_files:
-                print("  No PDFs, skipping.")
+                print("  No PDFs found, skipping.")
                 mark_as_read(mail, message_id)
                 continue
 
             for tmp_path, filename in pdf_files:
                 try:
-                    summary = run_agent_on_pdf(tmp_path, filename)
-                    summaries.append(summary)
+                    process_invoice(tmp_path, filename)
+                    processed += 1
                 except Exception as e:
-                    err = f"Error on {filename}: {e}"
-                    print(f"  [ERROR] {err}")
-                    summaries.append(err)
+                    print(f"  [ERROR] {filename}: {e}")
+                    errors += 1
                 finally:
                     try:
                         os.unlink(tmp_path)
@@ -445,14 +484,15 @@ def run_once() -> str:
             mark_as_read(mail, message_id)
 
         mail.logout()
-        print("Done.")
-        return "\n".join(summaries) if summaries else "Done — no output."
+        print("=" * 60)
+        print(f"Done. {processed} processed, {errors} errors.")
+        return f"Done — {processed} invoice(s) processed, {errors} error(s)."
 
     except imaplib.IMAP4.error as e:
         return f"Gmail connection error: {e}"
 
 
-# ── Background thread ──────────────────────────────────────────────────────────
+# ── Background thread (controlled from app UI) ─────────────────────────────────
 
 _watch_thread  = None
 _watch_running = False
@@ -497,23 +537,33 @@ def run_agent(query: str) -> str:
                               "check inbox", "run agent", "re-index", "reindex"]):
         return run_once()
 
+    # Default — return stock levels
     try:
-        rows = tool_get_stock_levels()
+        conn = get_connection()
+        rows = conn.execute("""
+            SELECT product_name, quantity_kg, reorder_at, unit
+            FROM stock ORDER BY quantity_kg ASC
+        """).fetchall()
+        conn.close()
+
         if not rows:
             return "No stock data found."
+
         lines, alerts = [], []
         for r in rows:
             qty   = r["quantity_kg"]
-            reord = r.get("reorder_at") or 0
-            unit  = r.get("unit") or "kg"
+            reord = r["reorder_at"] or 0
+            unit  = r["unit"] or "kg"
             flag  = " ⚠ LOW" if qty < reord else ""
             lines.append(f"  {r['product_name']}: {qty}{unit}{flag}")
             if qty < reord:
                 alerts.append(r["product_name"])
+
         summary = "\n".join(lines)
         if alerts:
             summary += f"\n\nAlert: {', '.join(alerts)} below reorder threshold."
         return summary
+
     except Exception as e:
         return f"Error: {e}"
 
