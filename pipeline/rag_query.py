@@ -36,12 +36,33 @@ CLAUDE_MODEL     = "claude-sonnet-4-6"
 TOP_K            = 5       # number of invoices to retrieve per query
 MAX_TOKENS       = 1024
 
-# ── Clients ────────────────────────────────────────────────────────────────────
+# ── Clients (lazy — initialized on first use) ──────────────────────────────────
 
-openai_client    = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-chroma_client    = chromadb.PersistentClient(path=CHROMA_DIR)
-collection       = chroma_client.get_collection(COLLECTION_NAME)
+_openai_client    = None
+_anthropic_client = None
+_collection       = None
+
+
+def _get_openai():
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    return _openai_client
+
+
+def _get_anthropic():
+    global _anthropic_client
+    if _anthropic_client is None:
+        _anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    return _anthropic_client
+
+
+def _get_collection():
+    global _collection
+    if _collection is None:
+        chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
+        _collection   = chroma_client.get_collection(COLLECTION_NAME)
+    return _collection
 
 
 # ── Step 1: Intent detection ───────────────────────────────────────────────────
@@ -77,7 +98,7 @@ def detect_intent(query: str) -> str:
 # ── Step 2: Retrieve relevant invoices ────────────────────────────────────────
 
 def get_embedding(text: str) -> list:
-    response = openai_client.embeddings.create(
+    response = _get_openai().embeddings.create(
         model=OPENAI_MODEL,
         input=text,
     )
@@ -98,7 +119,7 @@ def retrieve(query: str, intent: str, n: int = TOP_K) -> list:
     if intent in ("supplier", "customer"):
         query_params["where"] = {"invoice_type": intent}
 
-    results = collection.query(**query_params)
+    results = _get_collection().query(**query_params)
 
     retrieved = []
     for doc, meta, dist in zip(
@@ -151,7 +172,7 @@ You have access to the company's invoice history. When answering questions:
 
 def generate_answer(query: str, context: str) -> str:
     """Pass the query and retrieved context to Claude and return the answer."""
-    message = anthropic_client.messages.create(
+    message = _get_anthropic().messages.create(
         model=CLAUDE_MODEL,
         max_tokens=MAX_TOKENS,
         system=SYSTEM_PROMPT,

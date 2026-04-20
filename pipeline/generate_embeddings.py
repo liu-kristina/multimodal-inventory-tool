@@ -44,13 +44,19 @@ CHROMA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "chr
 COLLECTION_NAME = "invoices"
 OPENAI_MODEL    = "text-embedding-3-small"
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+_openai_client = None
+
+def _get_openai_client():
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    return _openai_client
 
 
 # ── Embedding ──────────────────────────────────────────────────────────────────
 
 def get_embedding(text: str) -> list:
-    response = client.embeddings.create(
+    response = _get_openai_client().embeddings.create(
         model=OPENAI_MODEL,
         input=text,
     )
