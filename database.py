@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
-
-DB_PATH = str(Path(__file__).parent / "inventory.db")
+import os
+DB_PATH = os.environ.get("DB_PATH", str(Path(__file__).parent / "inventory.db"))
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH)

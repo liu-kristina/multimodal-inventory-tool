@@ -1,10 +1,19 @@
-dash
-dash-bootstrap-components
-plotly
-anthropic
-openai
-chromadb
-pymupdf
-python-dotenv
-faker
-fpdf2
+# Core app
+dash==4.1.0
+dash-bootstrap-components==2.0.4
+plotly==6.7.0
+
+# AI / embeddings
+anthropic==0.94.0
+openai==2.31.0
+chromadb==1.5.7
+
+# PDF processing
+PyMuPDF==1.27.2.2
+
+# Utilities
+python-dotenv==1.2.2
+
+# Invoice generators (dev / data generation only)
+fpdf2==2.8.7
+Faker==40.13.0

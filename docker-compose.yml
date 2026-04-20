@@ -1,0 +1,34 @@
+services:
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    ports:
+      - "8050:8050"
+    env_file: .env
+    volumes:
+      - ./data:/app/data               # invoice PDFs
+      - ./chroma_db:/app/chroma_db     # ChromaDB index
+      - db_data:/app/db                # SQLite database
+    environment:
+      - DB_PATH=/app/db/inventory.db   # override DB location to volume
+    depends_on:
+      - agent
+    restart: unless-stopped
+
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    env_file: .env
+    volumes:
+      - ./data:/app/data               # invoice PDFs (shared with app)
+      - ./chroma_db:/app/chroma_db     # ChromaDB index (shared with app)
+      - db_data:/app/db                # SQLite database (shared with app)
+    environment:
+      - DB_PATH=/app/db/inventory.db   # override DB location to volume
+    restart: unless-stopped
+
+volumes:
+  db_data:                             # named volume for SQLite persistence
