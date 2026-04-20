@@ -11,6 +11,12 @@ Then open: http://localhost:8050
 import dash
 import dash_bootstrap_components as dbc
 from dash import html, dcc
+from database import init_db, seed_initial_inventory, seed_products
+
+
+init_db()
+seed_initial_inventory()
+seed_products()
 
 app = dash.Dash(
     __name__,
