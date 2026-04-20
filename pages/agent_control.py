@@ -11,7 +11,7 @@ import sys
 from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from database import get_connection
+from database import get_connection, _execute
 from invoice_agent import start_watch, stop_watch, is_running, run_agent
 
 dash.register_page(__name__, path="/agent-control", name="Agent Control")
@@ -21,7 +21,7 @@ dash.register_page(__name__, path="/agent-control", name="Agent Control")
 
 def get_agent_state():
     conn = get_connection()
-    conn.execute("""
+    _execute(conn, """
         CREATE TABLE IF NOT EXISTS agent_state (
             id          INTEGER PRIMARY KEY,
             active      INTEGER DEFAULT 0,
@@ -29,18 +29,18 @@ def get_agent_state():
             last_status TEXT
         )
     """)
-    row = conn.execute("SELECT * FROM agent_state WHERE id=1").fetchone()
+    row = _execute(conn, "SELECT * FROM agent_state WHERE id=1").fetchone()
     if not row:
-        conn.execute("INSERT INTO agent_state (id, active) VALUES (1, 0)")
+        _execute(conn, "INSERT INTO agent_state (id, active) VALUES (1, 0)")
         conn.commit()
-        row = conn.execute("SELECT * FROM agent_state WHERE id=1").fetchone()
+        row = _execute(conn, "SELECT * FROM agent_state WHERE id=1").fetchone()
     conn.close()
     return dict(row)
 
 
 def get_run_log(limit=10):
     conn = get_connection()
-    conn.execute("""
+    _execute(conn, """
         CREATE TABLE IF NOT EXISTS agent_log (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             message    TEXT,
@@ -48,7 +48,8 @@ def get_run_log(limit=10):
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    rows = conn.execute(
+    rows = _execute(
+        conn,
         "SELECT * FROM agent_log ORDER BY created_at DESC LIMIT ?", (limit,)
     ).fetchall()
     conn.close()
@@ -58,7 +59,7 @@ def get_run_log(limit=10):
 def get_flags(resolved=False):
     conn = get_connection()
     try:
-        conn.execute("""
+        _execute(conn, """
             CREATE TABLE IF NOT EXISTS agent_flags (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 reason     TEXT,
@@ -67,7 +68,8 @@ def get_flags(resolved=False):
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        rows = conn.execute(
+        rows = _execute(
+            conn,
             "SELECT * FROM agent_flags WHERE resolved=? ORDER BY created_at DESC",
             (1 if resolved else 0,)
         ).fetchall()
@@ -81,17 +83,19 @@ def get_flags(resolved=False):
 def get_stats():
     conn = get_connection()
     try:
-        invoices = conn.execute("SELECT COUNT(*) FROM invoices").fetchone()[0]
+        invoices = _execute(conn, "SELECT COUNT(*) FROM invoices").fetchone()[0]
     except Exception:
         invoices = 0
     try:
-        alerts = conn.execute(
+        alerts = _execute(
+            conn,
             "SELECT COUNT(*) FROM stock WHERE quantity_kg < reorder_at"
         ).fetchone()[0]
     except Exception:
         alerts = 0
     try:
-        flags = conn.execute(
+        flags = _execute(
+            conn,
             "SELECT COUNT(*) FROM agent_flags WHERE resolved=0"
         ).fetchone()[0]
     except Exception:
@@ -103,11 +107,13 @@ def get_stats():
 def log_run(message, status="ok"):
     conn = get_connection()
     local_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn.execute(
+    _execute(
+        conn,
         "INSERT INTO agent_log (message, status, created_at) VALUES (?, ?, ?)",
         (message, status, local_time)
     )
-    conn.execute(
+    _execute(
+        conn,
         "UPDATE agent_state SET last_run=?, last_status=? WHERE id=1",
         (local_time, status)
     )
@@ -288,9 +294,11 @@ def layout():
 def toggle_agent(active):
     msg = start_watch() if active else stop_watch()
     conn = get_connection()
-    conn.execute("UPDATE agent_state SET active=? WHERE id=1", (1 if active else 0,))
-    conn.commit()
-    conn.close()
+    try:
+        _execute(conn, "UPDATE agent_state SET active=? WHERE id=1", (1 if active else 0,))
+        conn.commit()
+    finally:
+        conn.close()
     log_run(msg)
     return ""
 
@@ -330,8 +338,9 @@ def resolve_flag(n_clicks):
         return ""
     flag_id = dash.callback_context.triggered_id["index"]
     conn = get_connection()
-    conn.execute("UPDATE agent_flags SET resolved=1 WHERE id=?", (flag_id,))
-    conn.commit()
-    conn.close()
+    try:
+        _execute(conn, "UPDATE agent_flags SET resolved=1 WHERE id=?", (flag_id,))
+        conn.commit()
+    finally:
+        conn.close()
     return ""
-
