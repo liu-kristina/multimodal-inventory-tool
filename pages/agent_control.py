@@ -11,7 +11,7 @@ import sys
 from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from database import get_connection, _execute
+from database import get_connection, _execute, _use_postgres
 from invoice_agent import start_watch, stop_watch, is_running, run_agent
 
 dash.register_page(__name__, path="/agent-control", name="Agent Control")
@@ -40,14 +40,24 @@ def get_agent_state():
 
 def get_run_log(limit=10):
     conn = get_connection()
-    _execute(conn, """
-        CREATE TABLE IF NOT EXISTS agent_log (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            message    TEXT,
-            status     TEXT DEFAULT 'ok',
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+    if _use_postgres:
+        _execute(conn, """
+            CREATE TABLE IF NOT EXISTS agent_log (
+                id         SERIAL PRIMARY KEY,
+                message    TEXT,
+                status     TEXT DEFAULT 'ok',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    else:
+        _execute(conn, """
+            CREATE TABLE IF NOT EXISTS agent_log (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                message    TEXT,
+                status     TEXT DEFAULT 'ok',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
     rows = _execute(
         conn,
         "SELECT * FROM agent_log ORDER BY created_at DESC LIMIT ?", (limit,)
@@ -59,15 +69,26 @@ def get_run_log(limit=10):
 def get_flags(resolved=False):
     conn = get_connection()
     try:
-        _execute(conn, """
-            CREATE TABLE IF NOT EXISTS agent_flags (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                reason     TEXT,
-                details    TEXT,
-                resolved   INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        if _use_postgres:
+            _execute(conn, """
+                CREATE TABLE IF NOT EXISTS agent_flags (
+                    id         SERIAL PRIMARY KEY,
+                    reason     TEXT,
+                    details    TEXT,
+                    resolved   INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        else:
+            _execute(conn, """
+                CREATE TABLE IF NOT EXISTS agent_flags (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    reason     TEXT,
+                    details    TEXT,
+                    resolved   INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
         rows = _execute(
             conn,
             "SELECT * FROM agent_flags WHERE resolved=? ORDER BY created_at DESC",
