@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from database import get_connection
+from database import get_connection, _execute, _use_postgres
 
 dash.register_page(__name__, path="/inventory", title="Inventory")
 
@@ -17,8 +17,10 @@ dash.register_page(__name__, path="/inventory", title="Inventory")
 
 def get_inventory():
     conn = get_connection()
-    rows = conn.execute("SELECT * FROM stock ORDER BY product_name").fetchall()
-    conn.close()
+    try:
+        rows = _execute(conn, "SELECT * FROM stock ORDER BY product_name").fetchall()
+    finally:
+        conn.close()
     return [
         {
             "product": row["product_name"],
@@ -38,7 +40,7 @@ def get_pending_products():
     """Return products flagged by the invoice agent as unknown."""
     try:
         conn = get_connection()
-        rows = conn.execute("""
+        rows = _execute(conn, """
             SELECT * FROM pending_products WHERE status = 'pending' ORDER BY created_at DESC
         """).fetchall()
         conn.close()
@@ -50,18 +52,28 @@ def get_pending_products():
 def approve_pending_product(product_name: str):
     """Move a pending product into the products table and mark as approved."""
     conn = get_connection()
-    conn.execute("INSERT OR IGNORE INTO products (product_name) VALUES (?)", (product_name,))
-    conn.execute("UPDATE pending_products SET status = 'approved' WHERE product_name = ?", (product_name,))
-    conn.commit()
-    conn.close()
+    try:
+        if _use_postgres:
+            _execute(conn, """
+                INSERT INTO products (product_name) VALUES (?)
+                ON CONFLICT (product_name) DO NOTHING
+            """, (product_name,))
+        else:
+            _execute(conn, "INSERT OR IGNORE INTO products (product_name) VALUES (?)", (product_name,))
+        _execute(conn, "UPDATE pending_products SET status = 'approved' WHERE product_name = ?", (product_name,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def dismiss_pending_product(product_name: str):
     """Dismiss a pending product without adding it."""
     conn = get_connection()
-    conn.execute("UPDATE pending_products SET status = 'dismissed' WHERE product_name = ?", (product_name,))
-    conn.commit()
-    conn.close()
+    try:
+        _execute(conn, "UPDATE pending_products SET status = 'dismissed' WHERE product_name = ?", (product_name,))
+        conn.commit()
+    finally:
+        conn.close()
 
 def setup_db():
     """
@@ -71,11 +83,11 @@ def setup_db():
     """
     conn = get_connection()
     try:
-        conn.execute("ALTER TABLE stock ADD COLUMN reorder_at REAL DEFAULT 0")
+        _execute(conn, "ALTER TABLE stock ADD COLUMN reorder_at REAL DEFAULT 0")
     except Exception:
         pass  # column already exists
     try:
-        conn.execute("ALTER TABLE stock ADD COLUMN unit TEXT DEFAULT 'kg'")
+        _execute(conn, "ALTER TABLE stock ADD COLUMN unit TEXT DEFAULT 'kg'")
     except Exception:
         pass  # column already exists
 
@@ -94,7 +106,7 @@ def setup_db():
         ("Glucosamine HCl",             80),
     ]
     for product, reorder in reorder_thresholds:
-        conn.execute("UPDATE stock SET reorder_at = ? WHERE product_name = ?", (reorder, product))
+        _execute(conn, "UPDATE stock SET reorder_at = ? WHERE product_name = ?", (reorder, product))
     conn.commit()
     conn.close()
     print("Done")
