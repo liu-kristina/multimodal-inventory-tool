@@ -1,110 +1,238 @@
+"""
+database.py — Database abstraction layer
+Supports both Postgres (production/Railway) and SQLite (local dev/testing).
+
+Postgres is used when DATABASE_URL is set in the environment.
+SQLite is used as fallback for local development and CI.
+
+Postgres:  set DATABASE_URL=postgresql://user:pass@host:5432/dbname
+SQLite:    set DB_PATH=/path/to/inventory.db  (or leave as default)
+"""
+
+import os
 import sqlite3
 from pathlib import Path
-import os
-DB_PATH = os.environ.get("DB_PATH", str(Path(__file__).parent / "inventory.db"))
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+DB_PATH      = os.environ.get("DB_PATH", str(Path(__file__).parent / "inventory.db"))
+
+_use_postgres = bool(DATABASE_URL)
+
+if _use_postgres:
+    import psycopg2
+    import psycopg2.extras
+
+
+# ── Connection ─────────────────────────────────────────────────────────────────
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    if _use_postgres:
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+        return conn
+    else:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+
+def _execute(conn, sql: str, params=None):
+    """Execute a statement — handles both Postgres (%s) and SQLite (?) placeholders."""
+    if _use_postgres:
+        sql = sql.replace("?", "%s")
+    cur = conn.cursor()
+    cur.execute(sql, params or [])
+    return cur
+
+
+def _executemany(conn, sql: str, params_list):
+    if _use_postgres:
+        sql = sql.replace("?", "%s")
+    cur = conn.cursor()
+    cur.executemany(sql, params_list)
+    return cur
+
+
+# ── Schema ─────────────────────────────────────────────────────────────────────
 
 def init_db():
     conn = get_connection()
+    cur  = conn.cursor()
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS stock (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            product_name TEXT NOT NULL UNIQUE,
-            supplier TEXT,
-            quantity_kg REAL DEFAULT 0,
-            reorder_at REAL DEFAULT 0,
-            unit TEXT DEFAULT 'kg',
-            unit_price REAL,
-            last_updated TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS invoices (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            invoice_number TEXT NOT NULL UNIQUE,
-            invoice_type TEXT NOT NULL,
-            counterparty_name TEXT,
-            invoice_date TEXT,
-            total_amount REAL DEFAULT 0,
-            filename TEXT,
-            embedded INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS invoice_line_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            invoice_number TEXT NOT NULL,
-            product_name TEXT,
-            quantity_kg REAL DEFAULT 0,
-            unit_price REAL DEFAULT 0,
-            line_total REAL DEFAULT 0,
-            FOREIGN KEY (invoice_number) REFERENCES invoices(invoice_number)
-        )
-    """)
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS products (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            product_name TEXT NOT NULL UNIQUE,
-            active INTEGER DEFAULT 1,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS pending_products (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            product_name TEXT NOT NULL UNIQUE,
-            status TEXT DEFAULT 'pending',
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+    if _use_postgres:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS stock (
+                id           SERIAL PRIMARY KEY,
+                product_name TEXT NOT NULL UNIQUE,
+                supplier     TEXT,
+                quantity_kg  REAL DEFAULT 0,
+                reorder_at   REAL DEFAULT 0,
+                unit         TEXT DEFAULT 'kg',
+                unit_price   REAL,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS invoices (
+                id                SERIAL PRIMARY KEY,
+                invoice_number    TEXT NOT NULL UNIQUE,
+                invoice_type      TEXT NOT NULL,
+                counterparty_name TEXT,
+                invoice_date      TEXT,
+                total_amount      REAL DEFAULT 0,
+                filename          TEXT,
+                embedded          INTEGER DEFAULT 0,
+                created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS invoice_line_items (
+                id             SERIAL PRIMARY KEY,
+                invoice_number TEXT NOT NULL,
+                product_name   TEXT,
+                quantity_kg    REAL DEFAULT 0,
+                unit_price     REAL DEFAULT 0,
+                line_total     REAL DEFAULT 0,
+                FOREIGN KEY (invoice_number) REFERENCES invoices(invoice_number)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS products (
+                id           SERIAL PRIMARY KEY,
+                product_name TEXT NOT NULL UNIQUE,
+                active       INTEGER DEFAULT 1,
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS pending_products (
+                id           SERIAL PRIMARY KEY,
+                product_name TEXT NOT NULL UNIQUE,
+                status       TEXT DEFAULT 'pending',
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS agent_state (
+                id          INTEGER PRIMARY KEY,
+                active      INTEGER DEFAULT 0,
+                last_run    TEXT,
+                last_status TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS agent_log (
+                id         SERIAL PRIMARY KEY,
+                message    TEXT,
+                status     TEXT DEFAULT 'ok',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS agent_flags (
+                id         SERIAL PRIMARY KEY,
+                reason     TEXT,
+                details    TEXT,
+                resolved   INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    else:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS stock (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_name TEXT NOT NULL UNIQUE,
+                supplier     TEXT,
+                quantity_kg  REAL DEFAULT 0,
+                reorder_at   REAL DEFAULT 0,
+                unit         TEXT DEFAULT 'kg',
+                unit_price   REAL,
+                last_updated TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS invoices (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                invoice_number    TEXT NOT NULL UNIQUE,
+                invoice_type      TEXT NOT NULL,
+                counterparty_name TEXT,
+                invoice_date      TEXT,
+                total_amount      REAL DEFAULT 0,
+                filename          TEXT,
+                embedded          INTEGER DEFAULT 0,
+                created_at        TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS invoice_line_items (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                invoice_number TEXT NOT NULL,
+                product_name   TEXT,
+                quantity_kg    REAL DEFAULT 0,
+                unit_price     REAL DEFAULT 0,
+                line_total     REAL DEFAULT 0,
+                FOREIGN KEY (invoice_number) REFERENCES invoices(invoice_number)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS products (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_name TEXT NOT NULL UNIQUE,
+                active       INTEGER DEFAULT 1,
+                created_at   TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS pending_products (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_name TEXT NOT NULL UNIQUE,
+                status       TEXT DEFAULT 'pending',
+                created_at   TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
     conn.commit()
     conn.close()
 
 
+# ── Invoice operations ─────────────────────────────────────────────────────────
+
 def save_invoice(extracted: dict):
-    """
-    Save an extracted invoice dict (from pdf_extractor) to SQLite.
-    Skips if invoice_number already exists.
-    Returns True if inserted, False if skipped.
-    """
+    """Save an extracted invoice to the database. Skips duplicates."""
     conn = get_connection()
 
-    invoice_type = extracted.get("invoice_type", "unknown")
-    counterparty = (
-        extracted.get("supplier_name") or
-        extracted.get("customer_name") or ""
-    )
+    invoice_type   = extracted.get("invoice_type", "unknown")
+    counterparty   = extracted.get("supplier_name") or extracted.get("customer_name") or ""
     invoice_number = extracted.get("invoice_number")
     if not invoice_number:
         invoice_number = f"unknown_{hash(str(extracted)) % 10000}"
 
     try:
-        conn.execute("""
-            INSERT OR IGNORE INTO invoices
-                (invoice_number, invoice_type, counterparty_name, invoice_date, total_amount, filename)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            invoice_number,
-            invoice_type,
-            counterparty,
-            extracted.get("invoice_date", ""),
-            float(extracted.get("grand_total", 0)),
-            extracted.get("filename", ""),
-        ))
+        if _use_postgres:
+            _execute(conn, """
+                INSERT INTO invoices
+                    (invoice_number, invoice_type, counterparty_name, invoice_date, total_amount, filename)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT (invoice_number) DO NOTHING
+            """, (
+                invoice_number, invoice_type, counterparty,
+                extracted.get("invoice_date", ""),
+                float(extracted.get("grand_total", 0)),
+                extracted.get("filename", ""),
+            ))
+        else:
+            _execute(conn, """
+                INSERT OR IGNORE INTO invoices
+                    (invoice_number, invoice_type, counterparty_name, invoice_date, total_amount, filename)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                invoice_number, invoice_type, counterparty,
+                extracted.get("invoice_date", ""),
+                float(extracted.get("grand_total", 0)),
+                extracted.get("filename", ""),
+            ))
 
         for item in extracted.get("line_items", []):
-            conn.execute("""
+            _execute(conn, """
                 INSERT INTO invoice_line_items
                     (invoice_number, product_name, quantity_kg, unit_price, line_total)
                 VALUES (?, ?, ?, ?, ?)
@@ -122,31 +250,30 @@ def save_invoice(extracted: dict):
 
 
 def get_unembedded_invoices() -> list:
-    """Return all invoices that haven't been embedded into ChromaDB yet."""
+    """Return invoice numbers not yet embedded into ChromaDB."""
     conn = get_connection()
-    rows = conn.execute("""
-        SELECT invoice_number FROM invoices WHERE embedded = 0
-    """).fetchall()
+    cur  = _execute(conn, "SELECT invoice_number FROM invoices WHERE embedded = 0")
+    rows = cur.fetchall()
     conn.close()
+    if _use_postgres:
+        return [row["invoice_number"] for row in rows]
     return [row["invoice_number"] for row in rows]
 
 
 def mark_embedded(invoice_number: str):
     """Mark an invoice as embedded in ChromaDB."""
     conn = get_connection()
-    conn.execute("""
-        UPDATE invoices SET embedded = 1 WHERE invoice_number = ?
-    """, (invoice_number,))
+    _execute(conn, "UPDATE invoices SET embedded = 1 WHERE invoice_number = ?", (invoice_number,))
     conn.commit()
     conn.close()
 
+
+# ── Stock operations ───────────────────────────────────────────────────────────
+
 def seed_initial_inventory():
-    """Insert starting inventory. Safe to run multiple times — skips existing rows."""
+    """Insert starting inventory. Safe to run multiple times."""
     conn = get_connection()
-    conn.executemany("""
-        INSERT OR IGNORE INTO stock (product_name, supplier, quantity_kg, reorder_at, unit, unit_price)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, [
+    rows = [
         ("Collagen Powder",             "Jiaxing Supplier", 450,  100, "kg", 12.50),
         ("Shark Cartilage Powder",      "Jiaxing Supplier", 80,   150, "kg", 18.00),
         ("Fish Collagen Peptides",      "Jiaxing Supplier", 210,  100, "kg", 15.00),
@@ -159,33 +286,48 @@ def seed_initial_inventory():
         ("Hyaluronic Acid Powder",      "Alt Distributor",  120,  50,  "kg", 55.00),
         ("Chondroitin Sulfate",         "Jiaxing Supplier", 200,  80,  "kg", 25.00),
         ("Glucosamine HCl",             "Jiaxing Supplier", 170,  80,  "kg", 18.00),
-    ])
+    ]
+    if _use_postgres:
+        for row in rows:
+            _execute(conn, """
+                INSERT INTO stock (product_name, supplier, quantity_kg, reorder_at, unit, unit_price)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT (product_name) DO NOTHING
+            """, row)
+    else:
+        _executemany(conn, """
+            INSERT OR IGNORE INTO stock (product_name, supplier, quantity_kg, reorder_at, unit, unit_price)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, rows)
     conn.commit()
     conn.close()
 
 
+# ── Product operations ─────────────────────────────────────────────────────────
+
 def get_known_products() -> list:
     """Return list of active product names for use in pdf_extractor."""
     conn = get_connection()
-    rows = conn.execute("""
-        SELECT product_name FROM products WHERE active = 1 ORDER BY product_name
-    """).fetchall()
+    cur  = _execute(conn, "SELECT product_name FROM products WHERE active = 1 ORDER BY product_name")
+    rows = cur.fetchall()
     conn.close()
     return [row["product_name"] for row in rows]
 
 
 def add_product(product_name: str) -> bool:
-    """
-    Add a new product to the products table.
-    Returns True if inserted, False if already exists.
-    """
+    """Add a new product. Returns True if inserted, False if already exists."""
     conn = get_connection()
     try:
-        conn.execute("""
-            INSERT OR IGNORE INTO products (product_name) VALUES (?)
-        """, (product_name,))
+        if _use_postgres:
+            cur = _execute(conn, """
+                INSERT INTO products (product_name) VALUES (?)
+                ON CONFLICT (product_name) DO NOTHING
+            """, (product_name,))
+            inserted = cur.rowcount > 0
+        else:
+            _execute(conn, "INSERT OR IGNORE INTO products (product_name) VALUES (?)", (product_name,))
+            inserted = conn.execute("SELECT changes()").fetchone()[0] > 0
         conn.commit()
-        inserted = conn.execute("SELECT changes()").fetchone()[0] > 0
     finally:
         conn.close()
     return inserted
@@ -194,9 +336,7 @@ def add_product(product_name: str) -> bool:
 def seed_products():
     """Seed the products table with the initial known product list."""
     conn = get_connection()
-    conn.executemany("""
-        INSERT OR IGNORE INTO products (product_name) VALUES (?)
-    """, [
+    products = [
         ("Collagen Powder",),
         ("Shark Cartilage Powder",),
         ("Bovine Gelatin Type A",),
@@ -212,12 +352,21 @@ def seed_products():
         ("Chondroitin Sulfate",),
         ("Glucosamine HCl",),
         ("Collagen Peptides Type I",),
-    ])
+    ]
+    if _use_postgres:
+        for p in products:
+            _execute(conn, """
+                INSERT INTO products (product_name) VALUES (?)
+                ON CONFLICT (product_name) DO NOTHING
+            """, p)
+    else:
+        _executemany(conn, "INSERT OR IGNORE INTO products (product_name) VALUES (?)", products)
     conn.commit()
     conn.close()
+
 
 if __name__ == "__main__":
     init_db()
     seed_initial_inventory()
     seed_products()
-    print("Database created and seeded.")
+    print(f"Database initialised ({'Postgres' if _use_postgres else 'SQLite'}) and seeded.")
