@@ -12,8 +12,7 @@ __pycache__/
 venv/
 env/
 
-# Data — mounted as volumes, not baked in
-data/
+# Runtime state
 chroma_db/
 inventory.db
 
