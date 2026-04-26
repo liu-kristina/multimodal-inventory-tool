@@ -26,7 +26,6 @@ Test queries:
 import json
 import sys
 import os
-import sqlite3
 import chromadb
 from openai import OpenAI
 from pathlib import Path
@@ -34,7 +33,7 @@ from dotenv import load_dotenv
 
 # database.py lives in the project root, one level up from pipeline/
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from database import get_connection, get_unembedded_invoices, mark_embedded, init_db
+from database import get_connection, get_unembedded_invoices, mark_embedded, init_db, _execute
 
 load_dotenv()
 
@@ -66,9 +65,9 @@ def get_embedding(text: str) -> list:
 # ── Load full invoice from SQLite ──────────────────────────────────────────────
 
 def load_invoice(invoice_number: str) -> dict:
-    """Load a full invoice dict from SQLite including line items."""
+    """Load a full invoice dict including line items."""
     conn = get_connection()
-    row = conn.execute("""
+    row = _execute(conn, """
         SELECT * FROM invoices WHERE invoice_number = ?
     """, (invoice_number,)).fetchone()
 
@@ -78,7 +77,7 @@ def load_invoice(invoice_number: str) -> dict:
 
     inv = dict(row)
 
-    line_items = conn.execute("""
+    line_items = _execute(conn, """
         SELECT * FROM invoice_line_items WHERE invoice_number = ?
     """, (invoice_number,)).fetchall()
 
@@ -88,9 +87,9 @@ def load_invoice(invoice_number: str) -> dict:
 
 
 def load_all_invoices() -> list:
-    """Load all invoices from SQLite including line items."""
+    """Load all invoices including line items."""
     conn = get_connection()
-    rows = conn.execute("SELECT invoice_number FROM invoices").fetchall()
+    rows = _execute(conn, "SELECT invoice_number FROM invoices").fetchall()
     conn.close()
     return [load_invoice(row["invoice_number"]) for row in rows]
 
@@ -209,7 +208,7 @@ def embed_new_invoices():
     for i, invoice_number in enumerate(unembedded):
         inv = load_invoice(invoice_number)
         if not inv:
-            print(f"  [{i+1}] SKIP {invoice_number} — not found in SQLite")
+            print(f"  [{i+1}] SKIP {invoice_number} — not found in database")
             continue
 
         text      = build_text(inv)
@@ -263,7 +262,7 @@ def rebuild_index():
 
     # Reset all embedded flags
     conn = get_connection()
-    conn.execute("UPDATE invoices SET embedded = 0")
+    _execute(conn, "UPDATE invoices SET embedded = 0")
     conn.commit()
     conn.close()
 
@@ -377,4 +376,3 @@ if __name__ == "__main__":
             print("Usage: python generate_embeddings.py --query 'your question'")
     else:
         embed_new_invoices()
-

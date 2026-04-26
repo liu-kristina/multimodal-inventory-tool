@@ -38,7 +38,7 @@ import anthropic
 load_dotenv()
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from database import init_db, save_invoice, get_connection
+from database import init_db, save_invoice, get_connection, _execute, _use_postgres
 from pipeline.pdf_extractor import extract_invoice
 from pipeline.generate_embeddings import embed_new_invoices
 
@@ -147,7 +147,8 @@ def is_duplicate(invoice_number: str) -> bool:
         return False
     conn = get_connection()
     try:
-        row = conn.execute(
+        row = _execute(
+            conn,
             "SELECT id FROM invoices WHERE invoice_number = ?",
             (invoice_number,)
         ).fetchone()
@@ -171,7 +172,8 @@ def get_price_anomalies(extracted: dict) -> list:
         invoice_price = float(item.get("unit_price", 0))
         if not product or invoice_price <= 0:
             continue
-        row = conn.execute(
+        row = _execute(
+            conn,
             "SELECT unit_price FROM stock WHERE product_name = ?", (product,)
         ).fetchone()
         if row and row["unit_price"] and row["unit_price"] > 0:
@@ -220,7 +222,7 @@ def update_stock(extracted: dict):
             continue
 
         if invoice_type == "supplier":
-            conn.execute("""
+            _execute(conn, """
                 INSERT INTO stock (product_name, quantity_kg, unit_price, last_updated)
                 VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(product_name) DO UPDATE SET
@@ -231,13 +233,22 @@ def update_stock(extracted: dict):
             updated.append(f"{product_name} +{quantity}kg")
 
         elif invoice_type == "customer":
-            conn.execute("""
+            if _use_postgres:
+                _execute(conn, """
+                    INSERT INTO stock (product_name, quantity_kg, last_updated)
+                    VALUES (?, 0, CURRENT_TIMESTAMP)
+                    ON CONFLICT(product_name) DO UPDATE SET
+                        quantity_kg = GREATEST(0, stock.quantity_kg - ?),
+                        last_updated = CURRENT_TIMESTAMP
+                """, (product_name, quantity))
+            else:
+                _execute(conn, """
                 INSERT INTO stock (product_name, quantity_kg, last_updated)
                 VALUES (?, MAX(0, -?), CURRENT_TIMESTAMP)
                 ON CONFLICT(product_name) DO UPDATE SET
                     quantity_kg = MAX(0, quantity_kg - excluded.quantity_kg),
                     last_updated = CURRENT_TIMESTAMP
-            """, (product_name, quantity))
+                """, (product_name, quantity))
             updated.append(f"{product_name} -{quantity}kg")
 
     conn.commit()
@@ -252,16 +263,28 @@ def update_stock(extracted: dict):
 def flag_for_review(reason: str, details: str = ""):
     """Log an item to agent_flags table for display in Agent Control page."""
     conn = get_connection()
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS agent_flags (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            reason     TEXT,
-            details    TEXT,
-            resolved   INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    conn.execute(
+    if _use_postgres:
+        _execute(conn, """
+            CREATE TABLE IF NOT EXISTS agent_flags (
+                id         SERIAL PRIMARY KEY,
+                reason     TEXT,
+                details    TEXT,
+                resolved   INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    else:
+        _execute(conn, """
+            CREATE TABLE IF NOT EXISTS agent_flags (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                reason     TEXT,
+                details    TEXT,
+                resolved   INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    _execute(
+        conn,
         "INSERT INTO agent_flags (reason, details) VALUES (?, ?)",
         (reason, details)
     )
@@ -540,7 +563,7 @@ def run_agent(query: str) -> str:
     # Default — return stock levels
     try:
         conn = get_connection()
-        rows = conn.execute("""
+        rows = _execute(conn, """
             SELECT product_name, quantity_kg, reorder_at, unit
             FROM stock ORDER BY quantity_kg ASC
         """).fetchall()
