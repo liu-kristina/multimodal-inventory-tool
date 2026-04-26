@@ -24,7 +24,6 @@ import chromadb
 import anthropic
 from openai import OpenAI
 from dotenv import load_dotenv
-from chromadb.errors import InvalidCollectionException
 
 load_dotenv()
 
@@ -64,7 +63,7 @@ def _get_collection():
         chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
         try:
             _collection = chroma_client.get_collection(COLLECTION_NAME)
-        except InvalidCollectionException as exc:
+        except Exception as exc:
             raise RuntimeError(
                 "The invoice search index has not been built yet. "
                 "Run the embedding step to create the ChromaDB 'invoices' collection."
