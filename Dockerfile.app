@@ -12,8 +12,9 @@ COPY database.py .
 COPY pages/ ./pages/
 COPY pipeline/ ./pipeline/
 COPY invoice_agent.py .
+COPY data/ ./data/
 
-# Data directories are mounted as volumes — not baked into the image
+# Ensure runtime directories exist; chroma_db can be backed by a volume.
 RUN mkdir -p data/invoices data/customer_invoices chroma_db
 
 EXPOSE 8050
