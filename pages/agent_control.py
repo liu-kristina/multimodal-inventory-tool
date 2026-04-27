@@ -271,6 +271,9 @@ def layout():
                     dbc.Button("Check Gmail now", size="sm", outline=True,
                                color="secondary", id="btn-gmail",
                                className="me-1 mb-1"),
+                    dbc.Button("Draft procurement email", size="sm", outline=True,
+                               color="secondary", id="btn-draft-email",
+                               className="me-1 mb-1"),
                     dbc.Button("Check procurement replies", size="sm", outline=True,
                                color="secondary", id="btn-replies",
                                className="me-1 mb-1"),
@@ -337,15 +340,17 @@ def toggle_agent(active):
     Output("cmd-input", "value"),
     Input("btn-stock",   "n_clicks"),
     Input("btn-gmail",   "n_clicks"),
+    Input("btn-draft-email", "n_clicks"),
     Input("btn-replies", "n_clicks"),
     prevent_initial_call=True,
 )
-def fill_command(s, g, r):
+def fill_command(s, g, d, r):
     ctx = dash.callback_context.triggered_id
     return {
-        "btn-stock":   "check low stock",
-        "btn-gmail":   "check gmail",
-        "btn-replies": "check procurement replies",
+        "btn-stock":       "check low stock",
+        "btn-gmail":       "check gmail",
+        "btn-draft-email": "draft procurement email",
+        "btn-replies":     "check procurement replies",
     }.get(ctx, "")
 
 

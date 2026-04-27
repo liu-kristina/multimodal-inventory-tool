@@ -335,7 +335,71 @@ def run_agent(command: str) -> str:
         except Exception as e:
             return f"Error checking procurement replies: {e}"
 
-    return f"Unknown command: '{command}'. Try: check low stock, check gmail, check procurement replies."
+    # ── draft procurement email ──
+    elif "draft" in cmd and ("procurement email" in cmd or "reorder email" in cmd):
+        try:
+            conn = get_connection()
+
+            product_name = None
+            match = re.search(r"(?:for|about)\s+(.+)$", command, re.IGNORECASE)
+            if match:
+                product_name = match.group(1).strip().rstrip(".!?")
+
+            if product_name:
+                row = _execute(
+                    conn,
+                    """
+                    SELECT product_name, supplier, quantity_kg, reorder_at, unit
+                    FROM stock
+                    WHERE LOWER(product_name) = LOWER(?)
+                    """,
+                    (product_name,),
+                ).fetchone()
+                if not row:
+                    conn.close()
+                    return f"Could not find a stock item named '{product_name}'."
+            else:
+                row = _execute(
+                    conn,
+                    """
+                    SELECT product_name, supplier, quantity_kg, reorder_at, unit
+                    FROM stock
+                    WHERE quantity_kg < reorder_at
+                    ORDER BY quantity_kg ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if not row:
+                    conn.close()
+                    return "No low-stock items found to draft a procurement email for."
+
+            conn.close()
+
+            supplier = row["supplier"] or "Supplier"
+            product = row["product_name"]
+            qty = row["quantity_kg"]
+            reorder_at = row["reorder_at"]
+            unit = row["unit"] or "kg"
+            suggested_qty = max(reorder_at * 2 - qty, reorder_at)
+
+            subject = f"Reorder Request - {product}"
+            body = (
+                f"Hello {supplier},\n\n"
+                f"We would like to place a reorder for {product}.\n"
+                f"Our current stock is {qty} {unit}, with a reorder threshold of {reorder_at} {unit}.\n"
+                f"Please confirm availability, lead time, and pricing for {suggested_qty:.0f} {unit}.\n\n"
+                f"Best regards,\n"
+                f"California Nutraceuticals"
+            )
+
+            return f"Subject: {subject}\n\n{body}"
+        except Exception as e:
+            return f"Error drafting procurement email: {e}"
+
+    return (
+        f"Unknown command: '{command}'. Try: check low stock, check gmail, "
+        "check procurement replies, draft procurement email for shark cartilage powder."
+    )
 
 
 if __name__ == "__main__":
