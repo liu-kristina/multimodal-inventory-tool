@@ -3,23 +3,24 @@ pages/agent_control.py — Agent Control page
 Toggle the invoice agent, run commands, view logs and flags.
 """
 
-import dash
-from dash import html, dcc, Input, Output, State, callback
-import dash_bootstrap_components as dbc
 import os
 import sys
 from datetime import datetime
 
+import dash
+import dash_bootstrap_components as dbc
+from dash import Input, Output, State, callback, dcc, html
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from database import get_connection, _execute, _use_postgres
-from invoice_agent import start_watch, stop_watch, is_running, run_agent
+from database import _execute, _use_postgres, get_connection
+from invoice_agent import is_running, run_agent, start_watch, stop_watch
 
 dash.register_page(__name__, path="/agent-control", name="Agent Control")
 
 
 # ── DB helpers ─────────────────────────────────────────────────────────────────
 
-def get_agent_state():
+def get_agent_state() -> dict:
     conn = get_connection()
     _execute(conn, """
         CREATE TABLE IF NOT EXISTS agent_state (
@@ -38,7 +39,7 @@ def get_agent_state():
     return dict(row)
 
 
-def get_run_log(limit=10):
+def get_run_log(limit: int = 10) -> list[dict]:
     conn = get_connection()
     if _use_postgres:
         _execute(conn, """
@@ -60,13 +61,14 @@ def get_run_log(limit=10):
         """)
     rows = _execute(
         conn,
-        "SELECT * FROM agent_log ORDER BY created_at DESC LIMIT ?", (limit,)
+        "SELECT * FROM agent_log ORDER BY created_at DESC LIMIT ?",
+        (limit,),
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
-def get_flags(resolved=False):
+def get_flags(resolved: bool = False) -> list[dict]:
     conn = get_connection()
     try:
         if _use_postgres:
@@ -92,7 +94,7 @@ def get_flags(resolved=False):
         rows = _execute(
             conn,
             "SELECT * FROM agent_flags WHERE resolved=? ORDER BY created_at DESC",
-            (1 if resolved else 0,)
+            (1 if resolved else 0,),
         ).fetchall()
         conn.close()
         return [dict(r) for r in rows]
@@ -101,7 +103,7 @@ def get_flags(resolved=False):
         return []
 
 
-def get_stats():
+def get_stats() -> dict:
     conn = get_connection()
     try:
         invoices = _execute(conn, "SELECT COUNT(*) FROM invoices").fetchone()[0]
@@ -109,15 +111,13 @@ def get_stats():
         invoices = 0
     try:
         alerts = _execute(
-            conn,
-            "SELECT COUNT(*) FROM stock WHERE quantity_kg < reorder_at"
+            conn, "SELECT COUNT(*) FROM stock WHERE quantity_kg < reorder_at"
         ).fetchone()[0]
     except Exception:
         alerts = 0
     try:
         flags = _execute(
-            conn,
-            "SELECT COUNT(*) FROM agent_flags WHERE resolved=0"
+            conn, "SELECT COUNT(*) FROM agent_flags WHERE resolved=0"
         ).fetchone()[0]
     except Exception:
         flags = 0
@@ -125,18 +125,18 @@ def get_stats():
     return {"invoices": invoices, "alerts": alerts, "flags": flags}
 
 
-def log_run(message, status="ok"):
+def log_run(message: str, status: str = "ok") -> None:
     conn = get_connection()
     local_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     _execute(
         conn,
         "INSERT INTO agent_log (message, status, created_at) VALUES (?, ?, ?)",
-        (message, status, local_time)
+        (message, status, local_time),
     )
     _execute(
         conn,
         "UPDATE agent_state SET last_run=?, last_status=? WHERE id=1",
-        (local_time, status)
+        (local_time, status),
     )
     conn.commit()
     conn.close()
@@ -162,17 +162,22 @@ def layout():
 
     def flag_card(f):
         return dbc.Row([
-            dbc.Col(html.Span("●", style={"color": "#E24B4A", "fontSize": "10px"}), width="auto"),
+            dbc.Col(
+                html.Span("●", style={"color": "#E24B4A", "fontSize": "10px"}),
+                width="auto",
+            ),
             dbc.Col([
                 html.P(f["reason"], className="mb-0 fw-500", style={"fontSize": "13px"}),
                 html.Small(f.get("details", ""), className="text-muted d-block"),
                 html.Small(f["created_at"], className="text-muted"),
             ]),
             dbc.Col(
-                dbc.Button("Resolve", size="sm", outline=True, color="secondary",
-                           id={"type": "resolve-btn", "index": f["id"]},
-                           className="float-end"),
-                width="auto"
+                dbc.Button(
+                    "Resolve", size="sm", outline=True, color="secondary",
+                    id={"type": "resolve-btn", "index": f["id"]},
+                    className="float-end",
+                ),
+                width="auto",
             ),
         ], align="start", className="mb-3")
 
@@ -187,8 +192,8 @@ def layout():
                     dbc.Col([
                         html.H6("Invoice agent", className="mb-0"),
                         html.Small(
-                            "Monitors Gmail · updates SQLite stock · embeds to ChromaDB",
-                            className="text-muted"
+                            "Monitors Gmail · updates stock · drafts and sends procurement email",
+                            className="text-muted",
                         ),
                     ]),
                     dbc.Col([
@@ -204,15 +209,13 @@ def layout():
                 dbc.Row([
                     dbc.Col(html.Small(
                         f"Last run: {state.get('last_run') or 'never'}",
-                        className="text-muted"
+                        className="text-muted",
                     )),
-                    dbc.Col(
-                        dbc.Badge(
-                            "Running" if active else "Stopped",
-                            color="success" if active else "secondary",
-                            className="float-end",
-                        )
-                    ),
+                    dbc.Col(dbc.Badge(
+                        "Running" if active else "Stopped",
+                        color="success" if active else "secondary",
+                        className="float-end",
+                    )),
                 ]),
             ])
         ], className="mb-3"),
@@ -231,7 +234,7 @@ def layout():
                 html.H4(
                     stats["flags"],
                     className="mb-0",
-                    style={"color": "#E24B4A"} if stats["flags"] > 0 else {}
+                    style={"color": "#E24B4A"} if stats["flags"] > 0 else {},
                 ),
                 html.Small("Needs review", className="text-muted"),
             ])), width=3),
@@ -241,11 +244,12 @@ def layout():
         html.P("Needs review", style=label_style),
         dbc.Card([
             dbc.CardBody([
-                html.Div(id="flags-container", children=[
-                    *[flag_card(f) for f in flags],
-                ] if flags else [
-                    html.Small("No items flagged for review.", className="text-muted")
-                ])
+                html.Div(
+                    id="flags-container",
+                    children=[flag_card(f) for f in flags] if flags else [
+                        html.Small("No items flagged for review.", className="text-muted")
+                    ],
+                )
             ])
         ], className="mb-3"),
 
@@ -256,7 +260,7 @@ def layout():
                 dbc.InputGroup([
                     dbc.Input(
                         id="cmd-input",
-                        placeholder="e.g. check low stock, check gmail…",
+                        placeholder="e.g. check low stock, check gmail, check procurement replies…",
                     ),
                     dbc.Button("Run", id="cmd-btn", color="secondary"),
                 ], className="mb-2"),
@@ -267,9 +271,15 @@ def layout():
                     dbc.Button("Check Gmail now", size="sm", outline=True,
                                color="secondary", id="btn-gmail",
                                className="me-1 mb-1"),
+                    dbc.Button("Check procurement replies", size="sm", outline=True,
+                               color="secondary", id="btn-replies",
+                               className="me-1 mb-1"),
                 ]),
-                html.Div(id="cmd-output", className="mt-2",
-                         style={"fontSize": "13px", "whiteSpace": "pre-wrap"}),
+                html.Div(
+                    id="cmd-output",
+                    className="mt-2",
+                    style={"fontSize": "13px", "whiteSpace": "pre-wrap"},
+                ),
             ])
         ], className="mb-3"),
 
@@ -287,8 +297,7 @@ def layout():
                             width="auto",
                         ),
                         dbc.Col([
-                            html.P(r["message"], className="mb-0",
-                                   style={"fontSize": "13px"}),
+                            html.P(r["message"], className="mb-0", style={"fontSize": "13px"}),
                             html.Small(r["created_at"], className="text-muted"),
                         ]),
                     ], align="start", className="mb-2")
@@ -326,13 +335,18 @@ def toggle_agent(active):
 
 @callback(
     Output("cmd-input", "value"),
-    Input("btn-stock", "n_clicks"),
-    Input("btn-gmail", "n_clicks"),
+    Input("btn-stock",   "n_clicks"),
+    Input("btn-gmail",   "n_clicks"),
+    Input("btn-replies", "n_clicks"),
     prevent_initial_call=True,
 )
-def fill_command(s, g):
+def fill_command(s, g, r):
     ctx = dash.callback_context.triggered_id
-    return {"btn-stock": "check low stock", "btn-gmail": "check gmail"}.get(ctx, "")
+    return {
+        "btn-stock":   "check low stock",
+        "btn-gmail":   "check gmail",
+        "btn-replies": "check procurement replies",
+    }.get(ctx, "")
 
 
 @callback(
