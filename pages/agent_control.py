@@ -14,13 +14,15 @@ from dash import Input, Output, State, callback, dcc, html
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from database import _execute, _use_postgres, get_connection
 from invoice_agent import (
-    discard_procurement_draft,
-    get_pending_drafts,
     is_running,
     run_agent,
-    send_procurement_draft,
     start_watch,
     stop_watch,
+)
+from procurement_agent import (
+    discard_procurement_draft,
+    get_pending_drafts,
+    send_procurement_draft,
 )
 
 dash.register_page(__name__, path="/agent-control", name="Agent Control")

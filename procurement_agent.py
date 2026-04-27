@@ -7,7 +7,6 @@ approval, sending, and procurement reply checks.
 
 from __future__ import annotations
 
-import os
 import re
 import uuid
 
@@ -15,9 +14,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from database import _execute, get_connection
-
-_draft_store: dict[str, dict] = {}
+from database import _execute, _use_postgres, get_connection
 
 SUPPLIER_EMAILS = {
     "Pacific Rim BioMaterials Co.": "jchen@pacificrimbiomaterials.com",
@@ -51,14 +48,19 @@ def get_low_stock_items() -> list[dict]:
         conn.close()
 
 
-def _build_procurement_draft(row: dict) -> dict:
+def _draft_from_row(row: dict) -> dict:
     supplier = row["supplier"] or "Supplier"
     product = row["product_name"]
-    qty = row["quantity_kg"]
-    reorder_at = row["reorder_at"]
+    qty = float(row["quantity_kg"] or 0)
+    reorder_at = float(row["reorder_at"] or 0)
     unit = row["unit"] or "kg"
     suggested_qty = max(reorder_at * 2 - qty, reorder_at)
     supplier_email = _lookup_supplier_email(supplier)
+    urgency = "high" if qty <= 0 else "medium"
+    reason = (
+        f"Current stock ({qty} {unit}) is below reorder threshold "
+        f"({reorder_at} {unit})."
+    )
     subject = f"Reorder Suggestion - {product}"
     body = (
         f"Hello {supplier},\n\n"
@@ -68,17 +70,92 @@ def _build_procurement_draft(row: dict) -> dict:
         f"Best regards,\n"
         f"California Nutraceuticals"
     )
-    draft_id = str(uuid.uuid4())[:8]
-    draft = {
-        "id": draft_id,
+    return {
         "product_name": product,
         "supplier": supplier,
         "supplier_email": supplier_email,
+        "current_stock_kg": qty,
+        "reorder_at_kg": reorder_at,
+        "suggested_order_qty": suggested_qty,
+        "urgency": urgency,
+        "reason": reason,
         "subject": subject,
         "body": body,
     }
-    _draft_store[draft_id] = draft
-    return draft
+
+
+def _save_draft(draft: dict) -> dict:
+    conn = get_connection()
+    try:
+        if _use_postgres:
+            row = _execute(
+                conn,
+                """
+                INSERT INTO procurement_recommendations
+                    (product_name, supplier, supplier_email, current_stock_kg, reorder_at_kg,
+                     suggested_order_qty, urgency, reason, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_approval')
+                RETURNING id
+                """,
+                (
+                    draft["product_name"],
+                    draft["supplier"],
+                    draft["supplier_email"],
+                    draft["current_stock_kg"],
+                    draft["reorder_at_kg"],
+                    draft["suggested_order_qty"],
+                    draft["urgency"],
+                    draft["reason"],
+                ),
+            ).fetchone()
+            recommendation_id = row["id"]
+        else:
+            rec_cur = _execute(
+                conn,
+                """
+                INSERT INTO procurement_recommendations
+                    (product_name, supplier, supplier_email, current_stock_kg, reorder_at_kg,
+                     suggested_order_qty, urgency, reason, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_approval')
+                """,
+                (
+                    draft["product_name"],
+                    draft["supplier"],
+                    draft["supplier_email"],
+                    draft["current_stock_kg"],
+                    draft["reorder_at_kg"],
+                    draft["suggested_order_qty"],
+                    draft["urgency"],
+                    draft["reason"],
+                ),
+            )
+            recommendation_id = rec_cur.lastrowid
+
+        draft_id = str(uuid.uuid4())[:8]
+        _execute(
+            conn,
+            """
+            INSERT INTO procurement_email_drafts
+                (id, recommendation_id, product_name, supplier, supplier_email, subject, body, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')
+            """,
+            (
+                draft_id,
+                recommendation_id,
+                draft["product_name"],
+                draft["supplier"],
+                draft["supplier_email"],
+                draft["subject"],
+                draft["body"],
+            ),
+        )
+        conn.commit()
+        saved = dict(draft)
+        saved["id"] = draft_id
+        saved["recommendation_id"] = recommendation_id
+        return saved
+    finally:
+        conn.close()
 
 
 def draft_procurement_emails(product_name: str | None = None) -> list[dict]:
@@ -94,48 +171,99 @@ def draft_procurement_emails(product_name: str | None = None) -> list[dict]:
                 """,
                 (product_name,),
             ).fetchone()
-            if not row:
-                return []
-            rows = [dict(row)]
+            rows = [dict(row)] if row else []
         else:
             rows = get_low_stock_items()
     finally:
         conn.close()
-    return [_build_procurement_draft(row) for row in rows]
+    return [_save_draft(_draft_from_row(row)) for row in rows]
 
 
 def get_pending_drafts() -> list[dict]:
-    return list(_draft_store.values())
+    conn = get_connection()
+    try:
+        rows = _execute(
+            conn,
+            """
+            SELECT id, recommendation_id, product_name, supplier, supplier_email, subject, body
+            FROM procurement_email_drafts
+            WHERE status = 'draft'
+            ORDER BY created_at DESC
+            """,
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def send_procurement_draft(draft_id: str) -> str:
     from email_feedback_agent import send_email
 
-    draft = _draft_store.get(draft_id)
-    if not draft:
-        return (
-            f"Draft '{draft_id}' was not found. Drafts are kept in memory, "
-            "so please generate the draft again before sending."
-        )
-    if not draft.get("supplier_email"):
-        return (
-            f"Draft '{draft_id}' has no supplier email address. "
-            "Add a supplier email mapping before sending."
-        )
+    conn = get_connection()
+    try:
+        row = _execute(
+            conn,
+            """
+            SELECT id, recommendation_id, product_name, supplier, supplier_email, subject, body
+            FROM procurement_email_drafts
+            WHERE id = ? AND status = 'draft'
+            """,
+            (draft_id,),
+        ).fetchone()
+        if not row:
+            return f"Draft '{draft_id}' was not found."
+        draft = dict(row)
+        if not draft.get("supplier_email"):
+            return (
+                f"Draft '{draft_id}' has no supplier email address. "
+                "Add a supplier email mapping before sending."
+            )
 
-    send_email(draft["supplier_email"], draft["subject"], draft["body"])
-    del _draft_store[draft_id]
-    return (
-        f"Sent procurement email for {draft['product_name']} to "
-        f"{draft['supplier']} <{draft['supplier_email']}>."
-    )
+        send_email(draft["supplier_email"], draft["subject"], draft["body"])
+        _execute(
+            conn,
+            "UPDATE procurement_email_drafts SET status = 'sent', sent_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (draft_id,),
+        )
+        _execute(
+            conn,
+            "UPDATE procurement_recommendations SET status = 'sent', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (draft["recommendation_id"],),
+        )
+        conn.commit()
+        return (
+            f"Sent procurement email for {draft['product_name']} to "
+            f"{draft['supplier']} <{draft['supplier_email']}>."
+        )
+    finally:
+        conn.close()
 
 
 def discard_procurement_draft(draft_id: str) -> str:
-    draft = _draft_store.pop(draft_id, None)
-    if not draft:
-        return f"Draft '{draft_id}' was not found."
-    return f"Discarded draft for {draft['product_name']}."
+    conn = get_connection()
+    try:
+        row = _execute(
+            conn,
+            "SELECT id, recommendation_id, product_name FROM procurement_email_drafts WHERE id = ? AND status = 'draft'",
+            (draft_id,),
+        ).fetchone()
+        if not row:
+            return f"Draft '{draft_id}' was not found."
+        draft = dict(row)
+        _execute(
+            conn,
+            "UPDATE procurement_email_drafts SET status = 'discarded' WHERE id = ?",
+            (draft_id,),
+        )
+        _execute(
+            conn,
+            "UPDATE procurement_recommendations SET status = 'discarded', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (draft["recommendation_id"],),
+        )
+        conn.commit()
+        return f"Discarded draft for {draft['product_name']}."
+    finally:
+        conn.close()
 
 
 def check_procurement_replies() -> str:
@@ -152,6 +280,25 @@ def check_procurement_replies() -> str:
             parsed = parse_reply(r["body"])
             action = parsed["action"]
             run_id = r["run_id"]
+
+            _execute(
+                conn,
+                """
+                INSERT INTO procurement_replies
+                    (draft_id, sender, subject, raw_body, parsed_action, parsed_supplier, parsed_quantity, parsed_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    r.get("sender"),
+                    r.get("subject"),
+                    r.get("body"),
+                    action,
+                    parsed.get("supplier"),
+                    parsed.get("quantity"),
+                    parsed.get("reason"),
+                ),
+            )
 
             detail = ""
             if parsed.get("reason"):

@@ -136,6 +136,50 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS procurement_recommendations (
+                id                  SERIAL PRIMARY KEY,
+                product_name        TEXT NOT NULL,
+                supplier            TEXT,
+                supplier_email      TEXT,
+                current_stock_kg    REAL NOT NULL,
+                reorder_at_kg       REAL NOT NULL,
+                suggested_order_qty REAL NOT NULL,
+                urgency             TEXT,
+                reason              TEXT,
+                status              TEXT DEFAULT 'pending_approval',
+                created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS procurement_email_drafts (
+                id                TEXT PRIMARY KEY,
+                recommendation_id INTEGER REFERENCES procurement_recommendations(id),
+                product_name      TEXT NOT NULL,
+                supplier          TEXT,
+                supplier_email    TEXT,
+                subject           TEXT NOT NULL,
+                body              TEXT NOT NULL,
+                status            TEXT DEFAULT 'draft',
+                created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                sent_at           TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS procurement_replies (
+                id              SERIAL PRIMARY KEY,
+                draft_id        TEXT,
+                sender          TEXT,
+                subject         TEXT,
+                raw_body        TEXT,
+                parsed_action   TEXT,
+                parsed_supplier TEXT,
+                parsed_quantity REAL,
+                parsed_reason   TEXT,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
     else:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS stock (
@@ -187,6 +231,50 @@ def init_db():
                 product_name TEXT NOT NULL UNIQUE,
                 status       TEXT DEFAULT 'pending',
                 created_at   TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS procurement_recommendations (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_name        TEXT NOT NULL,
+                supplier            TEXT,
+                supplier_email      TEXT,
+                current_stock_kg    REAL NOT NULL,
+                reorder_at_kg       REAL NOT NULL,
+                suggested_order_qty REAL NOT NULL,
+                urgency             TEXT,
+                reason              TEXT,
+                status              TEXT DEFAULT 'pending_approval',
+                created_at          TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at          TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS procurement_email_drafts (
+                id                TEXT PRIMARY KEY,
+                recommendation_id INTEGER,
+                product_name      TEXT NOT NULL,
+                supplier          TEXT,
+                supplier_email    TEXT,
+                subject           TEXT NOT NULL,
+                body              TEXT NOT NULL,
+                status            TEXT DEFAULT 'draft',
+                created_at        TEXT DEFAULT CURRENT_TIMESTAMP,
+                sent_at           TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS procurement_replies (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                draft_id        TEXT,
+                sender          TEXT,
+                subject         TEXT,
+                raw_body        TEXT,
+                parsed_action   TEXT,
+                parsed_supplier TEXT,
+                parsed_quantity REAL,
+                parsed_reason   TEXT,
+                created_at      TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
 

@@ -17,7 +17,6 @@ import os
 import re
 import threading
 import time
-import uuid
 
 import chromadb
 import pdfplumber
@@ -35,18 +34,6 @@ POLL_INTERVAL      = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))  # 5 min def
 
 anthropic_client = Anthropic()
 INVOICE_LABEL = os.getenv("INVOICE_LABEL", "invoices")
-
-_draft_store: dict[str, dict] = {}
-
-SUPPLIER_EMAILS = {
-    "Pacific Rim BioMaterials Co.": "jchen@pacificrimbiomaterials.com",
-    "Jiaxing Natural Products Ltd": "lwang@jiaxingnatural.com",
-    "Shanghai BioSupply International": "mzhou@shibiosupply.com",
-    "Zhejiang Green Botanicals Corp": "sliu@zjgreenbotanicals.com",
-    "Guangzhou Nutra Raw Materials Inc": "dliang@gznutraraw.com",
-    "Jiaxing Supplier": "lwang@jiaxingnatural.com",
-    "Alt Distributor": "sliu@zjgreenbotanicals.com",
-}
 
 
 # ── Filename helpers ───────────────────────────────────────────────────────────
@@ -288,78 +275,6 @@ def process_invoices() -> list[dict]:
     mail.logout()
     return processed
 
-
-def _lookup_supplier_email(supplier: str) -> str:
-    return SUPPLIER_EMAILS.get(supplier, "")
-
-
-def _build_procurement_draft(row: dict) -> dict:
-    supplier = row["supplier"] or "Supplier"
-    product = row["product_name"]
-    qty = row["quantity_kg"]
-    reorder_at = row["reorder_at"]
-    unit = row["unit"] or "kg"
-    suggested_qty = max(reorder_at * 2 - qty, reorder_at)
-    supplier_email = _lookup_supplier_email(supplier)
-    subject = f"Reorder Suggestion - {product}"
-    body = (
-        f"Hello {supplier},\n\n"
-        f"We would like to place a reorder for {product}.\n"
-        f"Our current stock is {qty} {unit}, with a reorder threshold of {reorder_at} {unit}.\n"
-        f"Please confirm availability, lead time, and pricing for {suggested_qty:.0f} {unit}.\n\n"
-        f"Best regards,\n"
-        f"California Nutraceuticals"
-    )
-    draft_id = str(uuid.uuid4())[:8]
-    draft = {
-        "id": draft_id,
-        "product_name": product,
-        "supplier": supplier,
-        "supplier_email": supplier_email,
-        "subject": subject,
-        "body": body,
-    }
-    _draft_store[draft_id] = draft
-    return draft
-
-
-def get_pending_drafts() -> list[dict]:
-    """Return current in-memory procurement drafts."""
-    return list(_draft_store.values())
-
-
-def send_procurement_draft(draft_id: str) -> str:
-    """Send a previously drafted procurement email."""
-    from email_feedback_agent import send_email
-
-    draft = _draft_store.get(draft_id)
-    if not draft:
-        return (
-            f"Draft '{draft_id}' was not found. Drafts are kept in memory, "
-            "so please generate the draft again before sending."
-        )
-    if not draft.get("supplier_email"):
-        return (
-            f"Draft '{draft_id}' has no supplier email address. "
-            "Add a supplier email mapping before sending."
-        )
-
-    send_email(draft["supplier_email"], draft["subject"], draft["body"])
-    del _draft_store[draft_id]
-    return (
-        f"Sent procurement email for {draft['product_name']} to "
-        f"{draft['supplier']} <{draft['supplier_email']}>."
-    )
-
-
-def discard_procurement_draft(draft_id: str) -> str:
-    """Discard a previously drafted procurement email."""
-    draft = _draft_store.pop(draft_id, None)
-    if not draft:
-        return f"Draft '{draft_id}' was not found."
-    return f"Discarded draft for {draft['product_name']}."
-
-
 # ── run_agent — called by agent_control command input ─────────────────────────
 
 def run_agent(command: str) -> str:
@@ -367,29 +282,12 @@ def run_agent(command: str) -> str:
     Dispatch a plain-text command from the agent control page.
     Returns a human-readable result string.
     """
-    from database import get_connection, _execute  # local import avoids circular dep
-    from email_feedback_agent import fetch_procurement_replies, parse_reply
+    from procurement_agent import run_procurement_command
 
     cmd = command.lower().strip()
 
-    # ── check low stock ──
-    if "low stock" in cmd:
-        try:
-            conn = get_connection()
-            rows = _execute(
-                conn,
-                "SELECT product_name, quantity_kg, reorder_at FROM stock WHERE quantity_kg < reorder_at"
-            ).fetchall()
-            conn.close()
-            if not rows:
-                return "No low-stock items."
-            lines = [f"• {r['product_name']}: {r['quantity_kg']} kg (reorder at {r['reorder_at']} kg)" for r in rows]
-            return "Low stock items:\n" + "\n".join(lines)
-        except Exception as e:
-            return f"Error checking stock: {e}"
-
     # ── check gmail / run invoice agent ──
-    elif "gmail" in cmd or "invoice" in cmd:
+    if "gmail" in cmd or "invoice" in cmd:
         try:
             results = process_invoices()
             if not results:
@@ -399,112 +297,9 @@ def run_agent(command: str) -> str:
         except Exception as e:
             return f"Error checking Gmail: {e}"
 
-    # ── draft procurement email ──
-    elif "draft" in cmd and ("procurement email" in cmd or "reorder email" in cmd):
-        try:
-            conn = get_connection()
-
-            product_name = None
-            match = re.search(r"(?:for|about)\s+(.+)$", command, re.IGNORECASE)
-            if match:
-                product_name = match.group(1).strip().rstrip(".!?")
-
-            if product_name:
-                row = _execute(
-                    conn,
-                    """
-                    SELECT product_name, supplier, quantity_kg, reorder_at, unit
-                    FROM stock
-                    WHERE LOWER(product_name) = LOWER(?)
-                    """,
-                    (product_name,),
-                ).fetchone()
-                if not row:
-                    conn.close()
-                    return f"Could not find a stock item named '{product_name}'."
-                rows = [row]
-            else:
-                rows = _execute(
-                    conn,
-                    """
-                    SELECT product_name, supplier, quantity_kg, reorder_at, unit
-                    FROM stock
-                    WHERE quantity_kg < reorder_at
-                    ORDER BY quantity_kg ASC
-                    """
-                ).fetchall()
-                if not rows:
-                    conn.close()
-                    return "No low-stock items found to draft procurement emails for."
-
-            conn.close()
-
-            drafts = []
-            for row in rows:
-                draft = _build_procurement_draft(row)
-                email_line = draft["supplier_email"] or "[missing supplier email]"
-                drafts.append(
-                    f"Draft ID: {draft['id']}\n"
-                    f"To: {email_line}\n"
-                    f"Subject: {draft['subject']}\n\n"
-                    f"{draft['body']}"
-                )
-
-            return (
-                "Drafted procurement emails for review. Nothing has been sent.\n"
-                "To send one, run: send procurement email <draft-id>\n\n"
-                + ("\n\n" + ("-" * 72) + "\n\n").join(drafts)
-            )
-        except Exception as e:
-            return f"Error drafting procurement email: {e}"
-
-    # ── send approved procurement email ──
-    elif cmd.startswith("send procurement email"):
-        try:
-            match = re.search(r"send procurement email\s+([a-zA-Z0-9\-]+)$", command.strip(), re.IGNORECASE)
-            if not match:
-                return "Please specify a draft ID, for example: send procurement email abc12345"
-            return send_procurement_draft(match.group(1))
-        except Exception as e:
-            return f"Error sending procurement email: {e}"
-
-    # ── check procurement replies ──
-    elif "procurement" in cmd or "repl" in cmd:
-        try:
-            replies = fetch_procurement_replies()
-            if not replies:
-                return "No procurement replies found."
-
-            conn = get_connection()
-            lines = []
-            for r in replies:
-                parsed = parse_reply(r["body"])
-                action = parsed["action"]
-                run_id = r["run_id"]
-
-                detail = ""
-                if parsed.get("reason"):
-                    detail += f" · Reason: {parsed['reason']}"
-                if parsed.get("supplier"):
-                    detail += f" · Supplier: {parsed['supplier']}"
-                if parsed.get("quantity"):
-                    detail += f" · Qty: {parsed['quantity']}"
-                lines.append(f"RUN_ID {run_id}: {action}{detail}")
-
-                if action in ("REJECT", "CHANGE", "INVALID"):
-                    _execute(
-                        conn,
-                        "INSERT INTO agent_flags (reason, details) VALUES (?, ?)",
-                        (
-                            f"Procurement reply: {action} [RUN_ID={run_id}]",
-                            f"Supplier: {parsed.get('supplier')} · Reason: {parsed.get('reason')}",
-                        ),
-                    )
-            conn.commit()
-            conn.close()
-            return "\n".join(lines)
-        except Exception as e:
-            return f"Error checking procurement replies: {e}"
+    procurement_result = run_procurement_command(command)
+    if procurement_result:
+        return procurement_result
 
     return (
         f"Unknown command: '{command}'. Try: check low stock, check gmail, "
