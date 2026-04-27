@@ -295,46 +295,6 @@ def run_agent(command: str) -> str:
         except Exception as e:
             return f"Error checking Gmail: {e}"
 
-    # ── check procurement replies ──
-    elif "procurement" in cmd or "repl" in cmd:
-        try:
-            replies = fetch_procurement_replies()
-            if not replies:
-                return "No procurement replies found."
-
-            conn = get_connection()
-            lines = []
-            for r in replies:
-                parsed = parse_reply(r["body"])
-                action = parsed["action"]
-                run_id = r["run_id"]
-
-                # Build summary line
-                detail = ""
-                if parsed.get("reason"):
-                    detail += f" · Reason: {parsed['reason']}"
-                if parsed.get("supplier"):
-                    detail += f" · Supplier: {parsed['supplier']}"
-                if parsed.get("quantity"):
-                    detail += f" · Qty: {parsed['quantity']}"
-                lines.append(f"RUN_ID {run_id}: {action}{detail}")
-
-                # Flag REJECT / CHANGE / INVALID for review
-                if action in ("REJECT", "CHANGE", "INVALID"):
-                    _execute(
-                        conn,
-                        "INSERT INTO agent_flags (reason, details) VALUES (?, ?)",
-                        (
-                            f"Procurement reply: {action} [RUN_ID={run_id}]",
-                            f"Supplier: {parsed.get('supplier')} · Reason: {parsed.get('reason')}",
-                        ),
-                    )
-            conn.commit()
-            conn.close()
-            return "\n".join(lines)
-        except Exception as e:
-            return f"Error checking procurement replies: {e}"
-
     # ── draft procurement email ──
     elif "draft" in cmd and ("procurement email" in cmd or "reorder email" in cmd):
         try:
@@ -358,43 +318,84 @@ def run_agent(command: str) -> str:
                 if not row:
                     conn.close()
                     return f"Could not find a stock item named '{product_name}'."
+                rows = [row]
             else:
-                row = _execute(
+                rows = _execute(
                     conn,
                     """
                     SELECT product_name, supplier, quantity_kg, reorder_at, unit
                     FROM stock
                     WHERE quantity_kg < reorder_at
                     ORDER BY quantity_kg ASC
-                    LIMIT 1
                     """
-                ).fetchone()
-                if not row:
+                ).fetchall()
+                if not rows:
                     conn.close()
-                    return "No low-stock items found to draft a procurement email for."
+                    return "No low-stock items found to draft procurement emails for."
 
             conn.close()
 
-            supplier = row["supplier"] or "Supplier"
-            product = row["product_name"]
-            qty = row["quantity_kg"]
-            reorder_at = row["reorder_at"]
-            unit = row["unit"] or "kg"
-            suggested_qty = max(reorder_at * 2 - qty, reorder_at)
+            drafts = []
+            for row in rows:
+                supplier = row["supplier"] or "Supplier"
+                product = row["product_name"]
+                qty = row["quantity_kg"]
+                reorder_at = row["reorder_at"]
+                unit = row["unit"] or "kg"
+                suggested_qty = max(reorder_at * 2 - qty, reorder_at)
 
-            subject = f"Reorder Request - {product}"
-            body = (
-                f"Hello {supplier},\n\n"
-                f"We would like to place a reorder for {product}.\n"
-                f"Our current stock is {qty} {unit}, with a reorder threshold of {reorder_at} {unit}.\n"
-                f"Please confirm availability, lead time, and pricing for {suggested_qty:.0f} {unit}.\n\n"
-                f"Best regards,\n"
-                f"California Nutraceuticals"
-            )
+                subject = f"Reorder Request - {product}"
+                body = (
+                    f"Hello {supplier},\n\n"
+                    f"We would like to place a reorder for {product}.\n"
+                    f"Our current stock is {qty} {unit}, with a reorder threshold of {reorder_at} {unit}.\n"
+                    f"Please confirm availability, lead time, and pricing for {suggested_qty:.0f} {unit}.\n\n"
+                    f"Best regards,\n"
+                    f"California Nutraceuticals"
+                )
+                drafts.append(f"Subject: {subject}\n\n{body}")
 
-            return f"Subject: {subject}\n\n{body}"
+            return "\n\n" + ("\n\n" + ("-" * 72) + "\n\n").join(drafts)
         except Exception as e:
             return f"Error drafting procurement email: {e}"
+
+    # ── check procurement replies ──
+    elif "procurement" in cmd or "repl" in cmd:
+        try:
+            replies = fetch_procurement_replies()
+            if not replies:
+                return "No procurement replies found."
+
+            conn = get_connection()
+            lines = []
+            for r in replies:
+                parsed = parse_reply(r["body"])
+                action = parsed["action"]
+                run_id = r["run_id"]
+
+                detail = ""
+                if parsed.get("reason"):
+                    detail += f" · Reason: {parsed['reason']}"
+                if parsed.get("supplier"):
+                    detail += f" · Supplier: {parsed['supplier']}"
+                if parsed.get("quantity"):
+                    detail += f" · Qty: {parsed['quantity']}"
+                lines.append(f"RUN_ID {run_id}: {action}{detail}")
+
+                if action in ("REJECT", "CHANGE", "INVALID"):
+                    _execute(
+                        conn,
+                        "INSERT INTO agent_flags (reason, details) VALUES (?, ?)",
+                        (
+                            f"Procurement reply: {action} [RUN_ID={run_id}]",
+                            f"Supplier: {parsed.get('supplier')} · Reason: {parsed.get('reason')}",
+                        ),
+                    )
+            conn.commit()
+            conn.close()
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Error checking procurement replies: {e}"
 
     return (
         f"Unknown command: '{command}'. Try: check low stock, check gmail, "

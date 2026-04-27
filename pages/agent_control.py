@@ -192,7 +192,7 @@ def layout():
                     dbc.Col([
                         html.H6("Invoice agent", className="mb-0"),
                         html.Small(
-                            "Monitors Gmail · updates stock · drafts and sends procurement email",
+                            "Monitors Gmail · updates stock · drafts procurement emails for review",
                             className="text-muted",
                         ),
                     ]),
@@ -271,7 +271,7 @@ def layout():
                     dbc.Button("Check Gmail now", size="sm", outline=True,
                                color="secondary", id="btn-gmail",
                                className="me-1 mb-1"),
-                    dbc.Button("Draft procurement email", size="sm", outline=True,
+                    dbc.Button("Draft emails for low stock", size="sm", outline=True,
                                color="secondary", id="btn-draft-email",
                                className="me-1 mb-1"),
                     dbc.Button("Check procurement replies", size="sm", outline=True,
@@ -349,7 +349,7 @@ def fill_command(s, g, d, r):
     return {
         "btn-stock":       "check low stock",
         "btn-gmail":       "check gmail",
-        "btn-draft-email": "draft procurement email",
+        "btn-draft-email": "draft procurement emails",
         "btn-replies":     "check procurement replies",
     }.get(ctx, "")
 
