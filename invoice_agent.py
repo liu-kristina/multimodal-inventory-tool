@@ -35,6 +35,47 @@ POLL_INTERVAL      = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))  # 5 min def
 
 anthropic_client = Anthropic()
 
+
+# ── Filename helpers ───────────────────────────────────────────────────────────
+
+def _clean(s: str, max_len: int = 30) -> str:
+    """Remove special chars, replace spaces with hyphens, cap length."""
+    s = str(s).strip()
+    s = re.sub(r"[^\w\s-]", "", s)
+    s = re.sub(r"\s+", "-", s)
+    s = re.sub(r"-+", "-", s)
+    return s[:max_len].strip("-")
+
+
+def _clean_date(date_str: str) -> str:
+    """Sanitize date string without capping — preserves full year."""
+    s = str(date_str).strip()
+    s = re.sub(r"[^\w-]", "", s)
+    return s
+
+
+def build_canonical_filename(extracted: dict) -> str:
+    """
+    Build standardised filename from extracted invoice data.
+    Convention: {type}_{counterparty}_{date}_{invoice_number}.pdf
+    """
+    inv_type = extracted.get("invoice_type", "unknown")
+    counterparty = (
+        extracted.get("supplier_name")
+        or extracted.get("customer_name")
+        or "unknown"
+    )
+    date = extracted.get("invoice_date", "nodate")
+    inv_number = extracted.get("invoice_number", "noinv")
+
+    return (
+        f"{inv_type}"
+        f"_{_clean(counterparty, max_len=30)}"
+        f"_{_clean_date(date)}"
+        f"_{_clean(inv_number, max_len=20)}"
+        f".pdf"
+    )
+
 # ── Background watch thread ────────────────────────────────────────────────────
 
 _watch_thread: threading.Thread | None = None
@@ -302,4 +343,3 @@ if __name__ == "__main__":
     print(f"Processed {len(results)} invoice(s):")
     for r in results:
         print(f"  - {r['invoice_number']} from {r['vendor']} for {r['amount']}")
-
