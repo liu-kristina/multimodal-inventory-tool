@@ -34,6 +34,19 @@ IMAP_PORT          = 993
 POLL_INTERVAL      = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))  # 5 min default
 
 anthropic_client = Anthropic()
+INVOICE_LABEL = os.getenv("INVOICE_LABEL", "invoices")
+
+_draft_store: dict[str, dict] = {}
+
+SUPPLIER_EMAILS = {
+    "Pacific Rim BioMaterials Co.": "jchen@pacificrimbiomaterials.com",
+    "Jiaxing Natural Products Ltd": "lwang@jiaxingnatural.com",
+    "Shanghai BioSupply International": "mzhou@shibiosupply.com",
+    "Zhejiang Green Botanicals Corp": "sliu@zjgreenbotanicals.com",
+    "Guangzhou Nutra Raw Materials Inc": "dliang@gznutraraw.com",
+    "Jiaxing Supplier": "lwang@jiaxingnatural.com",
+    "Alt Distributor": "sliu@zjgreenbotanicals.com",
+}
 
 
 # ── Filename helpers ───────────────────────────────────────────────────────────
@@ -122,6 +135,25 @@ def connect_gmail() -> imaplib.IMAP4_SSL:
 def mark_as_read(mail: imaplib.IMAP4_SSL, message_id: bytes) -> None:
     """Mark an email as read."""
     mail.store(message_id, "+FLAGS", "\\Seen")
+
+
+def ensure_gmail_label(mail: imaplib.IMAP4_SSL, label: str) -> None:
+    """Create a Gmail label if it does not already exist."""
+    try:
+        status, _ = mail.create(label)
+        if status not in ("OK", "NO"):
+            print(f"[invoice_agent] Warning: could not create label '{label}'")
+    except Exception as e:
+        print(f"[invoice_agent] Warning: could not ensure label '{label}': {e}")
+
+
+def add_gmail_label(mail: imaplib.IMAP4_SSL, message_id: bytes, label: str) -> None:
+    """Apply a Gmail label to a message."""
+    try:
+        ensure_gmail_label(mail, label)
+        mail.store(message_id, "+X-GM-LABELS", f"({label})")
+    except Exception as e:
+        print(f"[invoice_agent] Warning: could not label message with '{label}': {e}")
 
 
 def fetch_invoice_emails(mail: imaplib.IMAP4_SSL) -> list[tuple]:
@@ -242,6 +274,7 @@ def process_invoices() -> list[dict]:
                 continue
             invoice_data = extract_invoice_data(pdf_text)
             doc_id = store_invoice(collection, invoice_data, subject, sender)
+            add_gmail_label(mail, mid, INVOICE_LABEL)
             mark_as_read(mail, mid)
             processed.append({
                 "doc_id":         doc_id,
@@ -254,6 +287,77 @@ def process_invoices() -> list[dict]:
 
     mail.logout()
     return processed
+
+
+def _lookup_supplier_email(supplier: str) -> str:
+    return SUPPLIER_EMAILS.get(supplier, "")
+
+
+def _build_procurement_draft(row: dict) -> dict:
+    supplier = row["supplier"] or "Supplier"
+    product = row["product_name"]
+    qty = row["quantity_kg"]
+    reorder_at = row["reorder_at"]
+    unit = row["unit"] or "kg"
+    suggested_qty = max(reorder_at * 2 - qty, reorder_at)
+    supplier_email = _lookup_supplier_email(supplier)
+    subject = f"Reorder Suggestion - {product}"
+    body = (
+        f"Hello {supplier},\n\n"
+        f"We would like to place a reorder for {product}.\n"
+        f"Our current stock is {qty} {unit}, with a reorder threshold of {reorder_at} {unit}.\n"
+        f"Please confirm availability, lead time, and pricing for {suggested_qty:.0f} {unit}.\n\n"
+        f"Best regards,\n"
+        f"California Nutraceuticals"
+    )
+    draft_id = str(uuid.uuid4())[:8]
+    draft = {
+        "id": draft_id,
+        "product_name": product,
+        "supplier": supplier,
+        "supplier_email": supplier_email,
+        "subject": subject,
+        "body": body,
+    }
+    _draft_store[draft_id] = draft
+    return draft
+
+
+def get_pending_drafts() -> list[dict]:
+    """Return current in-memory procurement drafts."""
+    return list(_draft_store.values())
+
+
+def send_procurement_draft(draft_id: str) -> str:
+    """Send a previously drafted procurement email."""
+    from email_feedback_agent import send_email
+
+    draft = _draft_store.get(draft_id)
+    if not draft:
+        return (
+            f"Draft '{draft_id}' was not found. Drafts are kept in memory, "
+            "so please generate the draft again before sending."
+        )
+    if not draft.get("supplier_email"):
+        return (
+            f"Draft '{draft_id}' has no supplier email address. "
+            "Add a supplier email mapping before sending."
+        )
+
+    send_email(draft["supplier_email"], draft["subject"], draft["body"])
+    del _draft_store[draft_id]
+    return (
+        f"Sent procurement email for {draft['product_name']} to "
+        f"{draft['supplier']} <{draft['supplier_email']}>."
+    )
+
+
+def discard_procurement_draft(draft_id: str) -> str:
+    """Discard a previously drafted procurement email."""
+    draft = _draft_store.pop(draft_id, None)
+    if not draft:
+        return f"Draft '{draft_id}' was not found."
+    return f"Discarded draft for {draft['product_name']}."
 
 
 # ── run_agent — called by agent_control command input ─────────────────────────
@@ -337,27 +441,32 @@ def run_agent(command: str) -> str:
 
             drafts = []
             for row in rows:
-                supplier = row["supplier"] or "Supplier"
-                product = row["product_name"]
-                qty = row["quantity_kg"]
-                reorder_at = row["reorder_at"]
-                unit = row["unit"] or "kg"
-                suggested_qty = max(reorder_at * 2 - qty, reorder_at)
-
-                subject = f"Reorder Request - {product}"
-                body = (
-                    f"Hello {supplier},\n\n"
-                    f"We would like to place a reorder for {product}.\n"
-                    f"Our current stock is {qty} {unit}, with a reorder threshold of {reorder_at} {unit}.\n"
-                    f"Please confirm availability, lead time, and pricing for {suggested_qty:.0f} {unit}.\n\n"
-                    f"Best regards,\n"
-                    f"California Nutraceuticals"
+                draft = _build_procurement_draft(row)
+                email_line = draft["supplier_email"] or "[missing supplier email]"
+                drafts.append(
+                    f"Draft ID: {draft['id']}\n"
+                    f"To: {email_line}\n"
+                    f"Subject: {draft['subject']}\n\n"
+                    f"{draft['body']}"
                 )
-                drafts.append(f"Subject: {subject}\n\n{body}")
 
-            return "\n\n" + ("\n\n" + ("-" * 72) + "\n\n").join(drafts)
+            return (
+                "Drafted procurement emails for review. Nothing has been sent.\n"
+                "To send one, run: send procurement email <draft-id>\n\n"
+                + ("\n\n" + ("-" * 72) + "\n\n").join(drafts)
+            )
         except Exception as e:
             return f"Error drafting procurement email: {e}"
+
+    # ── send approved procurement email ──
+    elif cmd.startswith("send procurement email"):
+        try:
+            match = re.search(r"send procurement email\s+([a-zA-Z0-9\-]+)$", command.strip(), re.IGNORECASE)
+            if not match:
+                return "Please specify a draft ID, for example: send procurement email abc12345"
+            return send_procurement_draft(match.group(1))
+        except Exception as e:
+            return f"Error sending procurement email: {e}"
 
     # ── check procurement replies ──
     elif "procurement" in cmd or "repl" in cmd:
@@ -399,7 +508,7 @@ def run_agent(command: str) -> str:
 
     return (
         f"Unknown command: '{command}'. Try: check low stock, check gmail, "
-        "check procurement replies, draft procurement email for shark cartilage powder."
+        "check procurement replies, draft procurement emails, send procurement email <draft-id>."
     )
 
 
