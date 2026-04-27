@@ -274,12 +274,12 @@ def run_agent(command: str) -> str:
             conn = get_connection()
             rows = _execute(
                 conn,
-                "SELECT item_name, quantity_kg, reorder_at FROM stock WHERE quantity_kg < reorder_at"
+                "SELECT product_name, quantity_kg, reorder_at FROM stock WHERE quantity_kg < reorder_at"
             ).fetchall()
             conn.close()
             if not rows:
                 return "No low-stock items."
-            lines = [f"• {r['item_name']}: {r['quantity_kg']} kg (reorder at {r['reorder_at']} kg)" for r in rows]
+            lines = [f"• {r['product_name']}: {r['quantity_kg']} kg (reorder at {r['reorder_at']} kg)" for r in rows]
             return "Low stock items:\n" + "\n".join(lines)
         except Exception as e:
             return f"Error checking stock: {e}"
