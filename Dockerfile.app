@@ -12,6 +12,7 @@ COPY database.py .
 COPY pages/ ./pages/
 COPY pipeline/ ./pipeline/
 COPY invoice_agent.py .
+COPY email_feedback_agent.py .
 COPY data/ ./data/
 
 # Ensure runtime directories exist; chroma_db can be backed by a volume.
