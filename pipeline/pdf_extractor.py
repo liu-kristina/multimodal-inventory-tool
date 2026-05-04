@@ -87,6 +87,13 @@ Return this exact JSON structure:
 
 Rules:
 - invoice_type is "supplier" for COMMERCIAL INVOICE, "customer" for SALES INVOICE
+- For supplier invoices:
+  - supplier_name is the vendor/seller supplying goods to California Nutraceuticals
+  - customer_name should be California Nutraceuticals only if it is explicitly the buyer on the document
+- For customer invoices / sales invoices:
+  - customer_name is the external buyer receiving goods from California Nutraceuticals
+  - supplier_name should not be set to California Nutraceuticals just because California Nutraceuticals is the seller
+  - If California Nutraceuticals Inc. appears on a sales invoice, treat it as the seller, not the customer
 - Match line items to known products as closely as possible (e.g. "Shark Cartilage Pwd" -> "Shark Cartilage Powder")
 - If a product cannot be matched, set is_unknown_product to true and add to unknown_products list
 - Use null for missing fields, not empty strings
