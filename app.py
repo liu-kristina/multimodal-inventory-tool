@@ -55,6 +55,12 @@ sidebar = dbc.Nav(
             active="exact", 
             className="px-3 py-2"),
 
+        dbc.NavLink(
+            "About",  
+            href="/about",  
+            active="exact", 
+            className="px-3 py-2"),
+
     ],
     vertical=True,
     pills=True,
