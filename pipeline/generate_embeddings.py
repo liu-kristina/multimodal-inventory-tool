@@ -113,6 +113,11 @@ def build_supplier_text(inv: dict) -> str:
         f"Products supplied: {product_names}",
         f"Invoice number: {inv.get('invoice_number', '')}",
         f"Invoice date: {inv.get('invoice_date', '')}",
+        f"Port of loading: {inv.get('port_of_loading', '')}",
+        f"Shipment date: {inv.get('shipment_date', '')}",
+        f"Expected delivery: {inv.get('expected_delivery', '')}",
+        f"Typical lead time: {inv.get('lead_time', '')}",
+        f"Transit time: {inv.get('transit_time', '')}",
         f"Grand total: USD {inv.get('total_amount', 0):,.2f}",
     ]
     for item in products:

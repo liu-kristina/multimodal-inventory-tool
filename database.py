@@ -78,6 +78,11 @@ def init_db():
                 invoice_type      TEXT NOT NULL,
                 counterparty_name TEXT,
                 invoice_date      TEXT,
+                port_of_loading   TEXT,
+                shipment_date     TEXT,
+                expected_delivery TEXT,
+                lead_time         TEXT,
+                transit_time      TEXT,
                 total_amount      REAL DEFAULT 0,
                 filename          TEXT,
                 embedded          INTEGER DEFAULT 0,
@@ -200,6 +205,11 @@ def init_db():
                 invoice_type      TEXT NOT NULL,
                 counterparty_name TEXT,
                 invoice_date      TEXT,
+                port_of_loading   TEXT,
+                shipment_date     TEXT,
+                expected_delivery TEXT,
+                lead_time         TEXT,
+                transit_time      TEXT,
                 total_amount      REAL DEFAULT 0,
                 filename          TEXT,
                 embedded          INTEGER DEFAULT 0,
@@ -278,6 +288,20 @@ def init_db():
             )
         """)
 
+    # Lightweight migration for older DBs that were created before the
+    # shipping/lead-time fields were added to invoices.
+    for column in [
+        ("port_of_loading", "TEXT"),
+        ("shipment_date", "TEXT"),
+        ("expected_delivery", "TEXT"),
+        ("lead_time", "TEXT"),
+        ("transit_time", "TEXT"),
+    ]:
+        try:
+            _execute(conn, f"ALTER TABLE invoices ADD COLUMN {column[0]} {column[1]}")
+        except Exception:
+            pass
+
     conn.commit()
     conn.close()
 
@@ -298,23 +322,37 @@ def save_invoice(extracted: dict):
         if _use_postgres:
             _execute(conn, """
                 INSERT INTO invoices
-                    (invoice_number, invoice_type, counterparty_name, invoice_date, total_amount, filename)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (invoice_number, invoice_type, counterparty_name, invoice_date,
+                     port_of_loading, shipment_date, expected_delivery, lead_time, transit_time,
+                     total_amount, filename)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (invoice_number) DO NOTHING
             """, (
                 invoice_number, invoice_type, counterparty,
                 extracted.get("invoice_date", ""),
+                extracted.get("port_of_loading", ""),
+                extracted.get("shipment_date", ""),
+                extracted.get("expected_delivery", ""),
+                extracted.get("lead_time", ""),
+                extracted.get("transit_time", ""),
                 float(extracted.get("grand_total", 0)),
                 extracted.get("filename", ""),
             ))
         else:
             _execute(conn, """
                 INSERT OR IGNORE INTO invoices
-                    (invoice_number, invoice_type, counterparty_name, invoice_date, total_amount, filename)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (invoice_number, invoice_type, counterparty_name, invoice_date,
+                     port_of_loading, shipment_date, expected_delivery, lead_time, transit_time,
+                     total_amount, filename)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 invoice_number, invoice_type, counterparty,
                 extracted.get("invoice_date", ""),
+                extracted.get("port_of_loading", ""),
+                extracted.get("shipment_date", ""),
+                extracted.get("expected_delivery", ""),
+                extracted.get("lead_time", ""),
+                extracted.get("transit_time", ""),
                 float(extracted.get("grand_total", 0)),
                 extracted.get("filename", ""),
             ))
