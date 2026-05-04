@@ -57,7 +57,7 @@ sidebar = dbc.Nav(
 
         dbc.NavLink(
             "About",  
-            href="/about_us",  
+            href="/about",  
             active="exact", 
             className="px-3 py-2"),
 

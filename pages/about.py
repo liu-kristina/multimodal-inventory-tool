@@ -3,7 +3,7 @@ from dash import html
 import dash_bootstrap_components as dbc
 
 # Register page
-dash.register_page(__name__, path='/about_us', title="About us", name="About Us", order=5)
+dash.register_page(__name__, path="/about", title="About us", name="About Us", order=5)
 
 
 # ── App introduction section ────────────────────────────────────────────────────
