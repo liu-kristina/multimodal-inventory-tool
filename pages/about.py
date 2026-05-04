@@ -60,8 +60,7 @@ intro_section = dbc.Card(
                     ], md=6),
                 ]),
                 html.P(
-                    "Built with Dash, Claude AI (Anthropic), ChromaDB, and SQLite as a capstone project "
-                    "for the NLP and GenAI program at Easy Learning.",
+                    "Built with Dash, Claude AI (Anthropic), ChromaDB, and SQL",
                     className="text-muted mb-0",
                     style={'fontSize': '13px', 'fontStyle': 'italic'}
                 ),
