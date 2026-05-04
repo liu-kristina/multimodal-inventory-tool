@@ -140,7 +140,7 @@ def extract_invoice_with_ai(text: str, filename: str) -> dict:
 
     message = client.messages.create(
         model=CLAUDE_MODEL,
-        max_tokens=1000,
+        max_tokens=2000,
         messages=[{"role": "user", "content": prompt}],
     )
 
