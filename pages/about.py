@@ -27,7 +27,7 @@ intro_section = dbc.Card(
                             html.Span("💬", style={'fontSize': '20px'}),
                             html.Div([
                                 html.Strong("Invoice Chat", className="d-block", style={'fontSize': '14px'}),
-                                html.Span("Ask questions about suppliers, pricing, and lead times using RAG over your invoice history.", 
+                                html.Span("Ask questions about suppliers, pricing, and lead times using RAG over your invoice history.",
                                           className="text-muted", style={'fontSize': '13px'}),
                             ], className="ms-2")
                         ], className="d-flex align-items-start mb-3"),
@@ -35,7 +35,7 @@ intro_section = dbc.Card(
                             html.Span("📦", style={'fontSize': '20px'}),
                             html.Div([
                                 html.Strong("Inventory Dashboard", className="d-block", style={'fontSize': '14px'}),
-                                html.Span("Live stock levels with low-stock alerts and reorder threshold tracking.", 
+                                html.Span("Live stock levels with low-stock alerts and reorder threshold tracking.",
                                           className="text-muted", style={'fontSize': '13px'}),
                             ], className="ms-2")
                         ], className="d-flex align-items-start mb-3"),
@@ -45,7 +45,15 @@ intro_section = dbc.Card(
                             html.Span("🤖", style={'fontSize': '20px'}),
                             html.Div([
                                 html.Strong("Invoice Agent", className="d-block", style={'fontSize': '14px'}),
-                                html.Span("An AI agent that processes PDFs, extracts entities, and drafts supplier reorder emails.", 
+                                html.Span("An AI agent that processes PDFs, extracts entities, and drafts supplier reorder emails.",
+                                          className="text-muted", style={'fontSize': '13px'}),
+                            ], className="ms-2")
+                        ], className="d-flex align-items-start mb-3"),
+                        html.Div([
+                            html.Span("📧", style={'fontSize': '20px'}),
+                            html.Div([
+                                html.Strong("Procurement Agent", className="d-block", style={'fontSize': '14px'}),
+                                html.Span("Monitors low stock, drafts supplier reorder emails, manages approvals, and tracks procurement replies.",
                                           className="text-muted", style={'fontSize': '13px'}),
                             ], className="ms-2")
                         ], className="d-flex align-items-start mb-3"),
@@ -53,14 +61,14 @@ intro_section = dbc.Card(
                             html.Span("🔍", style={'fontSize': '20px'}),
                             html.Div([
                                 html.Strong("Smart Search", className="d-block", style={'fontSize': '14px'}),
-                                html.Span("ChromaDB vector search over invoice documents for fast, context-aware retrieval.", 
+                                html.Span("ChromaDB vector search over invoice documents for fast, context-aware retrieval.",
                                           className="text-muted", style={'fontSize': '13px'}),
                             ], className="ms-2")
                         ], className="d-flex align-items-start mb-3"),
                     ], md=6),
                 ]),
                 html.P(
-                    "Built with Dash, Claude AI (Anthropic), ChromaDB, and SQL",
+                    "Built with Dash, Claude AI (Anthropic), ChromaDB, and SQLite.",
                     className="text-muted mb-0",
                     style={'fontSize': '13px', 'fontStyle': 'italic'}
                 ),
@@ -69,7 +77,6 @@ intro_section = dbc.Card(
     ]),
     className="shadow-sm mb-4"
 )
-
 
 # ── Team member card ────────────────────────────────────────────────────────────
 
@@ -139,6 +146,7 @@ description_card = dbc.Card(
 
 layout = html.Div([
     html.H4("About the app", className="mb-1 fw-bold"),
+     intro_section,
     html.H4("The team", className="mb-1 fw-bold mt-2"),
     html.P("Connect with us on LinkedIn", className="text-muted mb-4"),
     team_section,
