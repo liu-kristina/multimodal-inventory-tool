@@ -110,7 +110,7 @@ def create_team_member_card(name, image, qr_code, github_handle):
 # ── Team section ────────────────────────────────────────────────────────────────
 
 team_section = dbc.Row([
-    create_team_member_card('Ying Huang',     'Yinh.png',     'JanQR.png',      'github.com/yh51'),
+    create_team_member_card('Ying Huang',     'Ying.png',     'KristinaQR.png', 'github.com/yh51'),
     create_team_member_card('Kristina Liang', 'Kristina.png', 'KristinaQR.png', 'github.com/liu-kristina'),
     create_team_member_card('Moxi Liang',     'Moxi.png',     'MoxiQR.png',     'github.com/moxixmx533-ux'),
 ], className="mt-3")
