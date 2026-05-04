@@ -139,8 +139,6 @@ description_card = dbc.Card(
 
 layout = html.Div([
     html.H4("About the app", className="mb-1 fw-bold"),
-    html.P("Built by the team below as part of the Easy Learning NLP & GenAI program.", className="text-muted mb-4"),
-    intro_section,
     html.H4("The team", className="mb-1 fw-bold mt-2"),
     html.P("Connect with us on LinkedIn", className="text-muted mb-4"),
     team_section,

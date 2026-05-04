@@ -20,7 +20,6 @@ SUGGESTIONS = [
     "What is the lead time from Jiaxing Natural Products?",
     "Which customers buy collagen from us?",
     "What is the best price we have paid for collagen powder?",
-    "Which customer is in Boulder Colorado?",
     "Draft a reorder email for shark cartilage powder",
 ]
 
