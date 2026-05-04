@@ -134,15 +134,6 @@ description_card = dbc.Card(
 )
 
 
-# ── Footer ──────────────────────────────────────────────────────────────────────
-
-footer_image = html.Div(
-    html.Img(
-        src=dash.get_asset_url('4_footer.png'),
-        style={'width': '100%', 'height': '40px', 'marginTop': '10px'}
-    )
-)
-
 
 # ── Layout ──────────────────────────────────────────────────────────────────────
 
@@ -154,5 +145,4 @@ layout = html.Div([
     html.P("Connect with us on LinkedIn", className="text-muted mb-4"),
     team_section,
     description_card,
-    footer_image,
 ])
