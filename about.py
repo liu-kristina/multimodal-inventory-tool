@@ -1,15 +1,10 @@
 import dash
 from dash import html
 import dash_bootstrap_components as dbc
-from src.dashboard.components.title_section import create_title_section
 
 # Register page
 dash.register_page(__name__, path='/about_us', title="About us", name="About Us", order=5)
 
-title_section = create_title_section(
-    "The team behind the app",
-    "Connect with us on LinkedIn"
-)
 
 # ── App introduction section ────────────────────────────────────────────────────
 
