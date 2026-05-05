@@ -13,7 +13,7 @@ tech_stack_line = html.P([
     html.A("Claude (Anthropic)", href="https://www.anthropic.com", target="_blank"),
     " for AI reasoning · ",
     html.A("OpenAI", href="https://openai.com", target="_blank"),
-    " text-embedding-3-small for semantic search · ChromaDB as the vector store · Dash for the interface · SQLite for structured data.",
+    " text-embedding-3-small for semantic search · ChromaDB as the vector store · Dash for the interface · SQL for structured data.",
 ], className="text-muted mb-4", style={'fontSize': '13px', 'fontStyle': 'italic'})
 
 
