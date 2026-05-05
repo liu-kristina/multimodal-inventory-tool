@@ -10,78 +10,19 @@ dash.register_page(__name__, path="/about", title="About us", name="About Us", o
 
 intro_section = dbc.Card(
     dbc.CardBody([
-        dbc.Row([
-            dbc.Col([
-                html.H5("What this app does", className="fw-bold mb-3"),
-                html.P(
-                    "This is an AI-powered procurement tool "
-                    "built for raw material distributors. It automates the extraction, storage, and "
-                    "analysis of supplier and customer invoices — turning unstructured PDFs into "
-                    "searchable, actionable data.",
-                    className="text-muted mb-3",
-                    style={'fontSize': '14px', 'lineHeight': '1.7'}
-                ),
-                dbc.Row([
-                    dbc.Col([
-                        html.Div([
-                            html.Span("💬", style={'fontSize': '20px'}),
-                            html.Div([
-                                html.A("Invoice Chat", href="/chat", className="fw-bold d-block text-decoration-none", style={'fontSize': '14px'}),
-                                html.Span("Ask questions about suppliers, pricing, and lead times using RAG over your invoice history.",
-                                          className="text-muted", style={'fontSize': '13px'}),
-                            ], className="ms-2")
-                        ], className="d-flex align-items-start mb-3"),
-                        html.Div([
-                            html.Span("📦", style={'fontSize': '20px'}),
-                            html.Div([
-                                html.A("Inventory Dashboard", href="/inventory", className="fw-bold d-block text-decoration-none", style={'fontSize': '14px'}),
-                                html.Span("Live stock levels with low-stock alerts and reorder threshold tracking.",
-                                          className="text-muted", style={'fontSize': '13px'}),
-                            ], className="ms-2")
-                        ], className="d-flex align-items-start mb-3"),
-                    ], md=6),
-                    dbc.Col([
-                        html.Div([
-                            html.Span("🤖", style={'fontSize': '20px'}),
-                            html.Div([
-                                html.A("Invoice Agent", href="/agent-control", className="fw-bold d-block text-decoration-none", style={'fontSize': '14px'}),
-                                html.Span("An AI agent that processes PDFs, extracts entities, and drafts supplier reorder emails.",
-                                          className="text-muted", style={'fontSize': '13px'}),
-                            ], className="ms-2")
-                        ], className="d-flex align-items-start mb-3"),
-                        html.Div([
-                            html.Span("📧", style={'fontSize': '20px'}),
-                            html.Div([
-                                html.A("Procurement Agent", href="/agent-control", className="fw-bold d-block text-decoration-none", style={'fontSize': '14px'}),
-                                html.Span("Monitors low stock, drafts supplier reorder emails, manages approvals, and tracks procurement replies.",
-                                          className="text-muted", style={'fontSize': '13px'}),
-                            ], className="ms-2")
-                        ], className="d-flex align-items-start mb-3"),
-                        html.Div([
-                            html.Span("🔍", style={'fontSize': '20px'}),
-                            html.Div([
-                                html.Strong("Smart Search", className="d-block", style={'fontSize': '14px'}),
-                                html.Span("ChromaDB vector search over invoice documents for fast, context-aware retrieval.",
-                                          className="text-muted", style={'fontSize': '13px'}),
-                            ], className="ms-2")
-                        ], className="d-flex align-items-start mb-3"),
-                    ], md=6),
-                ]),
-                html.P(
-                    "Powered by Claude (Anthropic) for AI reasoning, OpenAI text-embedding-3-small for semantic search, ChromaDB as the vector store, Dash for the interface, and SQLite for structured data.",
-                    className="text-muted mb-3",
-                    style={'fontSize': '13px', 'fontStyle': 'italic'}
-                ),
-                dbc.Alert([
-                    html.Strong("Privacy notice: "),
-                    "Invoice data entered in this app is processed by third-party APIs. Please review their privacy policies: ",
-                    html.A("Anthropic", href="https://www.anthropic.com/privacy", target="_blank", className="alert-link"),
-                    " · ",
-                    html.A("OpenAI", href="https://openai.com/policies/privacy-policy", target="_blank", className="alert-link"),
-                    ". Do not upload confidential documents in this demo environment.",
-                ], color="warning", className="mb-0", style={'fontSize': '13px'}),
-            ])
-        ])
+        html.P(
+            "Powered by Claude (Anthropic) for AI reasoning, OpenAI text-embedding-3-small for semantic search, ChromaDB as the vector store, Dash for the interface, and SQLite for structured data.",
+            className="text-muted mb-3",
+            style={'fontSize': '13px', 'fontStyle': 'italic'}
+        ),
+        dbc.Alert([
+            html.Strong("Privacy notice: "),
+            "Invoice data entered in this app is processed by third-party APIs. Please review their privacy policies: ",
+            html.A("Anthropic", href="https://www.anthropic.com/privacy", target="_blank", className="alert-link"),
+            " · ",
+            html.A("OpenAI", href="https://openai.com/policies/privacy-policy", target="_blank", className="alert-link"),
+            ". Do not upload confidential documents in this demo environment.",
+        ], color="warning", className="mb-0", style={'fontSize': '13px'}),
     ]),
     className="shadow-sm mb-4"
 )
