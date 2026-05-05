@@ -1,27 +1,65 @@
 import dash
-from dash import html
+from dash import html, Input, Output, callback
 import dash_bootstrap_components as dbc
+from database import get_connection, _execute, _use_postgres
 
 dash.register_page(__name__, path="/", title="Home", name="Home", order=0)
 
 
-# ── Stat card ────────────────────────────────────────────────────────────────
+# ── Live stat queries ─────────────────────────────────────────────────────────
 
-def stat_card(label, value, sub, color=None):
+def fetch_stats():
+    """Pull all homepage stats from the database in one connection."""
+    try:
+        conn = get_connection()
+
+        # Total invoices indexed
+        cur = _execute(conn, "SELECT COUNT(*) as n FROM invoices")
+        row = cur.fetchone()
+        invoice_count = row["n"] if _use_postgres else row[0]
+
+        # Products tracked (rows in stock table)
+        cur = _execute(conn, "SELECT COUNT(*) as n FROM stock")
+        row = cur.fetchone()
+        product_count = row["n"] if _use_postgres else row[0]
+
+        # Low stock alerts (quantity below reorder threshold)
+        cur = _execute(conn, "SELECT COUNT(*) as n FROM stock WHERE quantity_kg < reorder_at")
+        row = cur.fetchone()
+        low_stock_count = row["n"] if _use_postgres else row[0]
+
+        # Active customers (distinct customer counterparties)
+        cur = _execute(conn, """
+            SELECT COUNT(DISTINCT counterparty_name) as n
+            FROM invoices
+            WHERE invoice_type = 'customer'
+        """)
+        row = cur.fetchone()
+        customer_count = row["n"] if _use_postgres else row[0]
+
+        conn.close()
+        return invoice_count, product_count, low_stock_count, customer_count
+    except Exception:
+        return "—", "—", "—", "—"
+
+
+# ── Stat card ─────────────────────────────────────────────────────────────────
+
+def stat_card(label, value_id, sub, color=None):
     value_style = {'fontSize': '24px', 'fontWeight': '500', 'margin': '0'}
     if color:
         value_style['color'] = color
     return dbc.Card(
         dbc.CardBody([
             html.P(label, className="text-muted mb-1", style={'fontSize': '12px'}),
-            html.P(value, style=value_style),
+            html.P("—", id=value_id, style=value_style),
             html.P(sub, className="text-muted mb-0", style={'fontSize': '11px'}),
         ]),
         className="bg-light border-0",
     )
 
 
-# ── Feature card ─────────────────────────────────────────────────────────────
+# ── Feature card ──────────────────────────────────────────────────────────────
 
 def feature_card(icon, title, description, link_label, href):
     return dbc.Card(
@@ -35,9 +73,12 @@ def feature_card(icon, title, description, link_label, href):
     )
 
 
-# ── Layout ───────────────────────────────────────────────────────────────────
+# ── Layout ────────────────────────────────────────────────────────────────────
 
 layout = dbc.Container([
+
+    # Invisible trigger for on-load callback
+    html.Div(id="home-load-trigger"),
 
     # Hero
     dbc.Row([
@@ -61,12 +102,12 @@ layout = dbc.Container([
 
     html.Hr(className="my-4"),
 
-    # Stats row
+    # Stats row — values populated by callback on load
     dbc.Row([
-        dbc.Col(stat_card("Invoices indexed", "247", "supplier + customer"), md=3),
-        dbc.Col(stat_card("Products tracked", "15", "across all suppliers"), md=3),
-        dbc.Col(stat_card("Low stock alerts", "3", "below reorder threshold", color="var(--bs-warning)"), md=3),
-        dbc.Col(stat_card("Active customers", "12", "in invoice history"), md=3),
+        dbc.Col(stat_card("Invoices indexed",  "stat-invoices",  "supplier + customer"), md=3),
+        dbc.Col(stat_card("Products tracked",  "stat-products",  "across all suppliers"), md=3),
+        dbc.Col(stat_card("Low stock alerts",  "stat-low-stock", "below reorder threshold", color="var(--bs-warning)"), md=3),
+        dbc.Col(stat_card("Active customers",  "stat-customers", "in invoice history"), md=3),
     ], className="g-3 mb-4"),
 
     html.Hr(className="my-4"),
@@ -108,7 +149,7 @@ layout = dbc.Container([
                 "stores the data, and can draft a reorder email on your behalf."
             ),
             link_label="Upload an Invoice →",
-            href="/invoice-agent",
+            href="/agent-control",
         ), md=3),
         dbc.Col(feature_card(
             icon="👤",
@@ -132,3 +173,17 @@ layout = dbc.Container([
     ),
 
 ], fluid=True, className="py-4 px-4")
+
+
+# ── Callback — populate stats on page load ────────────────────────────────────
+
+@callback(
+    Output("stat-invoices",  "children"),
+    Output("stat-products",  "children"),
+    Output("stat-low-stock", "children"),
+    Output("stat-customers", "children"),
+    Input("home-load-trigger", "children"),
+)
+def update_stats(_):
+    invoices, products, low_stock, customers = fetch_stats()
+    return invoices, products, low_stock, customers
