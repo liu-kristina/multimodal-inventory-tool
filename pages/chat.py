@@ -11,7 +11,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from pipeline.rag_query import ask
 
-dash.register_page(__name__, path="/", title="Chat")
+dash.register_page(__name__, path="/chat", title="Chat")
 
 # ── Suggested questions ────────────────────────────────────────────────────────
 
