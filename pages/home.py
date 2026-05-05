@@ -143,12 +143,14 @@ layout = dbc.Container([
         ), md=3),
         dbc.Col(feature_card(
             icon="🤖",
-            title="Invoice Agent",
+            title="Agents",
             description=(
-                "Upload a supplier or customer PDF. The agent extracts entities, "
-                "stores the data, and can draft a reorder email on your behalf."
+                "Two AI agents working together: the Invoice Agent monitors Gmail "
+                "for incoming invoice PDFs and indexes them automatically. "
+                "The Procurement Agent detects low stock, drafts supplier reorder "
+                "emails for approval, and processes supplier replies."
             ),
-            link_label="Upload an Invoice →",
+            link_label="Open Agent Control →",
             href="/agent-control",
         ), md=3),
         dbc.Col(feature_card(
