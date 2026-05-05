@@ -137,7 +137,7 @@ def test_save_invoice_without_invoice_number():
 # ── Filename convention tests ──────────────────────────────────────────────────
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from invoice_agent import build_canonical_filename
+from agents.invoice_agent import build_canonical_filename
 
 
 def test_canonical_filename_supplier():

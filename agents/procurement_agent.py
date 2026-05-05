@@ -197,7 +197,7 @@ def get_pending_drafts() -> list[dict]:
 
 
 def send_procurement_draft(draft_id: str) -> str:
-    from email_feedback_agent import send_email
+    from agents.email_feedback_agent import send_email
 
     conn = get_connection()
     try:
@@ -267,7 +267,7 @@ def discard_procurement_draft(draft_id: str) -> str:
 
 
 def check_procurement_replies() -> str:
-    from email_feedback_agent import fetch_procurement_replies, parse_reply
+    from agents.email_feedback_agent import fetch_procurement_replies, parse_reply
 
     replies = fetch_procurement_replies()
     if not replies:

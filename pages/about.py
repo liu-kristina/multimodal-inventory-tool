@@ -14,7 +14,7 @@ intro_section = dbc.Card(
             dbc.Col([
                 html.H5("What this app does", className="fw-bold mb-3"),
                 html.P(
-                    "California Nutraceuticals Invoice Intelligence is an AI-powered procurement tool "
+                    "This is an AI-powered procurement tool "
                     "built for raw material distributors. It automates the extraction, storage, and "
                     "analysis of supplier and customer invoices — turning unstructured PDFs into "
                     "searchable, actionable data.",
@@ -26,7 +26,7 @@ intro_section = dbc.Card(
                         html.Div([
                             html.Span("💬", style={'fontSize': '20px'}),
                             html.Div([
-                                html.Strong("Invoice Chat", className="d-block", style={'fontSize': '14px'}),
+                                html.A("Invoice Chat", href="/chat", className="fw-bold d-block text-decoration-none", style={'fontSize': '14px'}),
                                 html.Span("Ask questions about suppliers, pricing, and lead times using RAG over your invoice history.",
                                           className="text-muted", style={'fontSize': '13px'}),
                             ], className="ms-2")
@@ -34,7 +34,7 @@ intro_section = dbc.Card(
                         html.Div([
                             html.Span("📦", style={'fontSize': '20px'}),
                             html.Div([
-                                html.Strong("Inventory Dashboard", className="d-block", style={'fontSize': '14px'}),
+                                html.A("Inventory Dashboard", href="/inventory", className="fw-bold d-block text-decoration-none", style={'fontSize': '14px'}),
                                 html.Span("Live stock levels with low-stock alerts and reorder threshold tracking.",
                                           className="text-muted", style={'fontSize': '13px'}),
                             ], className="ms-2")
@@ -44,7 +44,7 @@ intro_section = dbc.Card(
                         html.Div([
                             html.Span("🤖", style={'fontSize': '20px'}),
                             html.Div([
-                                html.Strong("Invoice Agent", className="d-block", style={'fontSize': '14px'}),
+                                html.A("Invoice Agent", href="/agent-control", className="fw-bold d-block text-decoration-none", style={'fontSize': '14px'}),
                                 html.Span("An AI agent that processes PDFs, extracts entities, and drafts supplier reorder emails.",
                                           className="text-muted", style={'fontSize': '13px'}),
                             ], className="ms-2")
@@ -52,7 +52,7 @@ intro_section = dbc.Card(
                         html.Div([
                             html.Span("📧", style={'fontSize': '20px'}),
                             html.Div([
-                                html.Strong("Procurement Agent", className="d-block", style={'fontSize': '14px'}),
+                                html.A("Procurement Agent", href="/agent-control", className="fw-bold d-block text-decoration-none", style={'fontSize': '14px'}),
                                 html.Span("Monitors low stock, drafts supplier reorder emails, manages approvals, and tracks procurement replies.",
                                           className="text-muted", style={'fontSize': '13px'}),
                             ], className="ms-2")
@@ -68,10 +68,18 @@ intro_section = dbc.Card(
                     ], md=6),
                 ]),
                 html.P(
-                    "Built with Dash, Claude AI (Anthropic), ChromaDB, and SQLite.",
-                    className="text-muted mb-0",
+                    "Powered by Claude (Anthropic) for AI reasoning, OpenAI text-embedding-3-small for semantic search, ChromaDB as the vector store, Dash for the interface, and SQLite for structured data.",
+                    className="text-muted mb-3",
                     style={'fontSize': '13px', 'fontStyle': 'italic'}
                 ),
+                dbc.Alert([
+                    html.Strong("Privacy notice: "),
+                    "Invoice data entered in this app is processed by third-party APIs. Please review their privacy policies: ",
+                    html.A("Anthropic", href="https://www.anthropic.com/privacy", target="_blank", className="alert-link"),
+                    " · ",
+                    html.A("OpenAI", href="https://openai.com/policies/privacy-policy", target="_blank", className="alert-link"),
+                    ". Do not upload confidential documents in this demo environment.",
+                ], color="warning", className="mb-0", style={'fontSize': '13px'}),
             ])
         ])
     ]),

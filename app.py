@@ -1,6 +1,5 @@
 """
-California Nutraceuticals Inc. - Invoice Intelligence App
-Main entry point for the Dash application.
+Welcome California Nutraceuticals Inc. to Your Invoice Intelligence Tool
 
 Run:
     python app.py
@@ -38,8 +37,14 @@ sidebar = dbc.Nav(
             className="px-3 py-4 border-bottom",
         ),
         dbc.NavLink(
-            "Chat",
+            "Home",
             href="/",
+            active="exact",
+            className="px-3 py-2",
+        ),
+        dbc.NavLink(
+            "Chat",
+            href="/chat",
             active="exact",
             className="px-3 py-2",
         ),
@@ -80,3 +85,4 @@ app.layout = html.Div(
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", debug=True, port=8050)
+

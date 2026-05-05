@@ -9,11 +9,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app.py .
 COPY database.py .
+COPY agents/ ./agents/
 COPY pages/ ./pages/
 COPY pipeline/ ./pipeline/
-COPY invoice_agent.py .
-COPY procurement_agent.py .
-COPY email_feedback_agent.py .
 COPY assets/ ./assets/
 COPY data/ ./data/
 

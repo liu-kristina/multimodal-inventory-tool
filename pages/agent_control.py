@@ -13,13 +13,13 @@ from dash import Input, Output, State, callback, dcc, html
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from database import _execute, _use_postgres, get_connection
-from invoice_agent import (
+from agents.invoice_agent import (
     is_running,
     run_agent,
     start_watch,
     stop_watch,
 )
-from procurement_agent import (
+from agents.procurement_agent import (
     discard_procurement_draft,
     get_pending_drafts,
     send_procurement_draft,

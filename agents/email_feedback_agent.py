@@ -5,7 +5,7 @@ Reads Gmail replies to procurement recommendation emails,
 parses structured commands (APPROVE / REJECT / CHANGE),
 and sends emails via Gmail SMTP.
 
-Reuses connect_gmail() and mark_as_read() from invoice_agent.py.
+Reuses connect_gmail() and mark_as_read() from agents.invoice_agent.
 """
 
 import email
@@ -17,7 +17,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from dotenv import load_dotenv
-from invoice_agent import connect_gmail, mark_as_read
+from agents.invoice_agent import connect_gmail, mark_as_read
 
 load_dotenv()
 

@@ -282,7 +282,7 @@ def run_agent(command: str) -> str:
     Dispatch a plain-text command from the agent control page.
     Returns a human-readable result string.
     """
-    from procurement_agent import run_procurement_command
+    from agents.procurement_agent import run_procurement_command
 
     cmd = command.lower().strip()
 
