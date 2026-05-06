@@ -22,7 +22,7 @@ Or import and use in your app:
 import os
 import chromadb
 import anthropic
-from openai import OpenAI
+from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -31,23 +31,23 @@ load_dotenv()
 
 CHROMA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "chroma_db")
 COLLECTION_NAME  = "invoices"
-OPENAI_MODEL     = "text-embedding-3-small"
+ST_MODEL         = "all-MiniLM-L6-v2"
 CLAUDE_MODEL     = "claude-sonnet-4-6"
 TOP_K            = 5       # number of invoices to retrieve per query
 MAX_TOKENS       = 1024
 
 # ── Clients (lazy — initialized on first use) ──────────────────────────────────
 
-_openai_client    = None
+_st_model         = None
 _anthropic_client = None
 _collection       = None
 
 
-def _get_openai():
-    global _openai_client
-    if _openai_client is None:
-        _openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    return _openai_client
+def _get_st_model() -> SentenceTransformer:
+    global _st_model
+    if _st_model is None:
+        _st_model = SentenceTransformer(ST_MODEL)
+    return _st_model
 
 
 def _get_anthropic():
@@ -104,11 +104,7 @@ def detect_intent(query: str) -> str:
 # ── Step 2: Retrieve relevant invoices ────────────────────────────────────────
 
 def get_embedding(text: str) -> list:
-    response = _get_openai().embeddings.create(
-        model=OPENAI_MODEL,
-        input=text,
-    )
-    return response.data[0].embedding
+    return _get_st_model().encode(text, normalize_embeddings=True).tolist()
 
 
 def retrieve(query: str, intent: str, n: int = TOP_K) -> list:

@@ -11,9 +11,7 @@ dash.register_page(__name__, path="/about", title="About us", name="About Us", o
 tech_stack_line = html.P([
     "Powered by ",
     html.A("Claude (Anthropic)", href="https://www.anthropic.com", target="_blank"),
-    " for AI reasoning · ",
-    html.A("OpenAI", href="https://openai.com", target="_blank"),
-    " text-embedding-3-small for semantic search · ChromaDB as the vector store · Dash for the interface · SQL for structured data.",
+    " for AI reasoning · local embeddings (sentence-transformers) for semantic search · ChromaDB as the vector store · Dash for the interface · SQL for structured data.",
 ], className="text-muted mb-4", style={'fontSize': '13px', 'fontStyle': 'italic'})
 
 
@@ -130,12 +128,10 @@ target_customer_section = dbc.Card(
 
 privacy_notice = dbc.Alert([
     html.Strong("Privacy notice: "),
-    "Invoice data entered in this app is processed by third-party APIs. Please review their privacy policies: ",
-    html.A("Anthropic", href="https://www.anthropic.com/privacy", target="_blank", className="alert-link"),
-    " · ",
-    html.A("OpenAI", href="https://openai.com/policies/privacy-policy", target="_blank", className="alert-link"),
-    ". Do not upload confidential documents in this demo environment.",
-], color="warning", className="mb-4", style={'fontSize': '13px'})
+    "Invoice data submitted through this app is processed by the ",
+    html.A("Claude API (Anthropic)", href="https://www.anthropic.com/privacy", target="_blank", className="alert-link"),
+    ". Semantic search runs on a local embedding model — invoice text is never sent to a third-party embedding service.",
+], color="info", className="mb-4", style={'fontSize': '13px'})
 
 
 # ── Layout ──────────────────────────────────────────────────────────────────────
