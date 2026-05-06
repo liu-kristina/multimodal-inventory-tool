@@ -135,6 +135,63 @@ def get_stats() -> dict:
     return {"invoices": invoices, "alerts": alerts, "flags": flags}
 
 
+def get_approval_history() -> dict:
+    """
+    Return procurement history split into pending and completed.
+    Joins drafts with replies so we can show what action was taken.
+    """
+    conn = get_connection()
+    try:
+        # Pending: drafts that have been sent but not yet replied to
+        pending = _execute(conn, """
+            SELECT
+                d.id          AS draft_id,
+                d.product_name,
+                d.supplier,
+                d.supplier_email,
+                d.status      AS draft_status,
+                d.created_at,
+                d.sent_at
+            FROM procurement_email_drafts d
+            WHERE d.status IN ('sent', 'draft')
+              AND d.id NOT IN (
+                  SELECT COALESCE(draft_id, '') FROM procurement_replies
+              )
+            ORDER BY d.created_at DESC
+            LIMIT 50
+        """).fetchall()
+
+        # Completed: drafts that have a reply, or were discarded
+        completed = _execute(conn, """
+            SELECT
+                d.id            AS draft_id,
+                d.product_name,
+                d.supplier,
+                d.status        AS draft_status,
+                d.created_at,
+                d.sent_at,
+                r.parsed_action AS reply_action,
+                r.parsed_reason AS reply_reason,
+                r.parsed_supplier AS reply_supplier,
+                r.created_at    AS replied_at
+            FROM procurement_email_drafts d
+            LEFT JOIN procurement_replies r ON r.draft_id = d.id
+            WHERE d.status = 'discarded'
+               OR r.id IS NOT NULL
+            ORDER BY COALESCE(r.created_at, d.created_at) DESC
+            LIMIT 50
+        """).fetchall()
+
+        return {
+            "pending":   [dict(r) for r in pending],
+            "completed": [dict(r) for r in completed],
+        }
+    except Exception:
+        return {"pending": [], "completed": []}
+    finally:
+        conn.close()
+
+
 def log_run(message: str, status: str = "ok") -> None:
     conn = get_connection()
     local_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -155,12 +212,13 @@ def log_run(message: str, status: str = "ok") -> None:
 # ── Layout ─────────────────────────────────────────────────────────────────────
 
 def layout():
-    state  = get_agent_state()
-    logs   = get_run_log()
-    flags  = get_flags(resolved=False)
-    stats  = get_stats()
-    active = is_running()
-    drafts = get_pending_drafts()
+    state    = get_agent_state()
+    logs     = get_run_log()
+    flags    = get_flags(resolved=False)
+    stats    = get_stats()
+    active   = is_running()
+    drafts   = get_pending_drafts()
+    approvals = get_approval_history()
 
     label_style = {
         "fontSize": "11px",
@@ -170,6 +228,40 @@ def layout():
         "color": "var(--bs-secondary)",
         "marginBottom": "8px",
     }
+
+    def _approval_row(r: dict, pending: bool):
+        action = r.get("reply_action") or r.get("draft_status", "").upper()
+        action_colors = {
+            "APPROVE": "#1D9E75",
+            "REJECT":  "#E24B4A",
+            "CHANGE":  "#f0a500",
+            "DISCARDED": "#adb5bd",
+            "SENT":    "#0d6efd",
+            "DRAFT":   "#6c757d",
+        }
+        badge_color = action_colors.get(action, "#6c757d")
+        detail_parts = []
+        if r.get("reply_reason"):
+            detail_parts.append(f"Reason: {r['reply_reason']}")
+        if r.get("reply_supplier"):
+            detail_parts.append(f"New supplier: {r['reply_supplier']}")
+        date_str = r.get("replied_at") or r.get("sent_at") or r.get("created_at") or ""
+        return dbc.Row([
+            dbc.Col(
+                html.Span("●", style={"color": badge_color, "fontSize": "10px"}),
+                width="auto",
+            ),
+            dbc.Col([
+                html.P(r["product_name"], className="mb-0 fw-semibold", style={"fontSize": "13px"}),
+                html.Small(f"Supplier: {r['supplier']}", className="text-muted d-block"),
+                html.Small(", ".join(detail_parts), className="text-muted d-block") if detail_parts else None,
+                html.Small(date_str, className="text-muted"),
+            ]),
+            dbc.Col(
+                dbc.Badge(action, style={"backgroundColor": badge_color}, className="float-end"),
+                width="auto",
+            ),
+        ], align="start", className="mb-3")
 
     def flag_card(f):
         return dbc.Row([
@@ -296,6 +388,14 @@ def layout():
                 ),
                 html.Small("Needs review", className="text-muted"),
             ])), width=3),
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.H4(
+                    len(approvals["pending"]),
+                    className="mb-0",
+                    style={"color": "#f0a500"} if approvals["pending"] else {},
+                ),
+                html.Small("Awaiting reply", className="text-muted"),
+            ])), width=3),
         ], className="mb-3 g-2"),
 
         # ── Flags for review ──
@@ -361,6 +461,37 @@ def layout():
             ])
         ], className="mb-3"),
 
+        # ── Approval history ──
+        html.P("Approval history", style=label_style),
+        dbc.Card([
+            dbc.CardBody([
+                dbc.Tabs([
+                    dbc.Tab(
+                        label=f"Awaiting reply ({len(approvals['pending'])})",
+                        tab_id="tab-pending",
+                        children=[
+                            html.Div(className="mt-3", children=(
+                                [_approval_row(r, pending=True) for r in approvals["pending"]]
+                                if approvals["pending"] else
+                                [html.Small("No emails awaiting reply.", className="text-muted")]
+                            ))
+                        ],
+                    ),
+                    dbc.Tab(
+                        label=f"Completed ({len(approvals['completed'])})",
+                        tab_id="tab-completed",
+                        children=[
+                            html.Div(className="mt-3", children=(
+                                [_approval_row(r, pending=False) for r in approvals["completed"]]
+                                if approvals["completed"] else
+                                [html.Small("No completed approvals yet.", className="text-muted")]
+                            ))
+                        ],
+                    ),
+                ], id="approval-tabs", active_tab="tab-pending"),
+            ])
+        ], className="mb-3"),
+
         # ── Run log ──
         html.P("Recent runs", style=label_style),
         dbc.Card([
@@ -391,6 +522,82 @@ def layout():
         html.Div(id="draft-feedback"),
 
     ], fluid=True)
+
+
+# ── Approval history renderer ──────────────────────────────────────────────────
+
+_ACTION_COLOR = {
+    "APPROVE":         "#1D9E75",
+    "APPROVE ANYWAY":  "#1D9E75",
+    "REJECT":          "#E24B4A",
+    "STOP PURCHASE":   "#E24B4A",
+    "CHANGE":          "#f0a500",
+    "PROVIDE NEW QUOTE": "#f0a500",
+    "INVALID":         "#aaa",
+    "UNKNOWN":         "#aaa",
+}
+
+_STATUS_COLOR = {
+    "pending_approval": "#aaa",
+    "sent":             "#f0a500",
+    "approved":         "#1D9E75",
+    "rejected":         "#E24B4A",
+    "discarded":        "#aaa",
+    "draft":            "#aaa",
+}
+
+def _render_approval_history(history: list) -> list:
+    if not history:
+        return [html.Small("No procurement history yet.", className="text-muted")]
+
+    rows = []
+    for h in history:
+        action       = h.get("parsed_action") or ""
+        draft_status = h.get("draft_status") or h.get("rec_status") or "unknown"
+        action_color = _ACTION_COLOR.get(action, "#aaa")
+        status_color = _STATUS_COLOR.get(draft_status, "#aaa")
+
+        detail_parts = []
+        if h.get("parsed_reason"):
+            detail_parts.append(f"Reason: {h['parsed_reason']}")
+        if h.get("parsed_supplier"):
+            detail_parts.append(f"New supplier: {h['parsed_supplier']}")
+        detail = " · ".join(detail_parts)
+
+        rows.append(
+            dbc.Row([
+                dbc.Col(
+                    html.Span("●", style={"color": action_color if action else status_color, "fontSize": "10px"}),
+                    width="auto",
+                ),
+                dbc.Col([
+                    html.P(
+                        [
+                            html.Span(h["product_name"], className="fw-semibold"),
+                            html.Span(f" · {h['supplier']}", className="text-muted"),
+                        ],
+                        className="mb-0",
+                        style={"fontSize": "13px"},
+                    ),
+                    html.Small([
+                        dbc.Badge(
+                            draft_status.replace("_", " ").title(),
+                            color="light",
+                            text_color="dark",
+                            className="me-1",
+                            style={"border": f"1px solid {status_color}"},
+                        ),
+                        html.Span(action, style={"color": action_color, "fontWeight": "600"}) if action else None,
+                        html.Span(f"  {detail}", className="text-muted") if detail else None,
+                    ], className="d-block"),
+                    html.Small(
+                        f"Created: {h['created_at']}" + (f" · Replied: {h['reply_at']}" if h.get("reply_at") else ""),
+                        className="text-muted",
+                    ),
+                ]),
+            ], align="start", className="mb-3")
+        )
+    return rows
 
 
 # ── Callbacks ──────────────────────────────────────────────────────────────────
@@ -590,3 +797,11 @@ def resolve_flag(n_clicks):
     finally:
         conn.close()
     return ""
+
+
+@callback(
+    Output("approval-history-container", "children"),
+    Input("approval-refresh", "n_intervals"),
+)
+def refresh_approval_history(n):
+    return _render_approval_history(get_approval_history())
