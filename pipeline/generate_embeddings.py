@@ -39,7 +39,7 @@ load_dotenv()
 
 CHROMA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "chroma_db")
 COLLECTION_NAME = "invoices"
-ST_MODEL        = "all-mpnet-base-v2"  # 768-dim, better retrieval quality
+ST_MODEL        = "all-MiniLM-L6-v2"   # 384-dim, 80MB — fits within Railway 1GB
 
 _st_model = None
 
@@ -88,14 +88,6 @@ def load_all_invoices() -> list:
     rows = _execute(conn, "SELECT invoice_number FROM invoices").fetchall()
     conn.close()
     return [load_invoice(row["invoice_number"]) for row in rows]
-
-
-def iter_all_invoice_numbers() -> list:
-    """Return just invoice numbers without loading invoice data into memory."""
-    conn = get_connection()
-    rows = _execute(conn, "SELECT invoice_number FROM invoices").fetchall()
-    conn.close()
-    return [row["invoice_number"] for row in rows]
 
 
 # ── Text builders ──────────────────────────────────────────────────────────────
@@ -238,24 +230,19 @@ def embed_new_invoices():
 # ── Full rebuild ───────────────────────────────────────────────────────────────
 
 def rebuild_index():
-    """Delete and rebuild the entire ChromaDB index from SQLite.
-    
-    Processes one invoice at a time to keep memory usage low —
-    safe to run on Railway's 1GB limit.
-    """
-    invoice_numbers = iter_all_invoice_numbers()
-    if not invoice_numbers:
+    """Delete and rebuild the entire ChromaDB index from SQLite."""
+    invoices = load_all_invoices()
+    if not invoices:
         print("No invoices found in SQLite. Upload some invoices first.")
         return
 
-    total = len(invoice_numbers)
-    print(f"Rebuilding index from {total} invoices in SQLite (one at a time)...")
+    print(f"Rebuilding index from {len(invoices)} invoices in SQLite...")
     print()
 
     chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
     try:
         chroma_client.delete_collection(COLLECTION_NAME)
-        print("Deleted existing ChromaDB collection.")
+        print(f"Deleted existing ChromaDB collection.")
     except Exception:
         pass
 
@@ -270,16 +257,8 @@ def rebuild_index():
     conn.commit()
     conn.close()
 
-    # Load model once before the loop so it isn't reloaded per invoice
-    _get_st_model()
-
-    succeeded = 0
-    for i, invoice_number in enumerate(invoice_numbers):
-        inv = load_invoice(invoice_number)  # load one at a time
-        if not inv:
-            print(f"  [{i+1:3d}/{total}]  SKIP {invoice_number} — not found")
-            continue
-
+    for i, inv in enumerate(invoices):
+        invoice_number = inv.get("invoice_number", f"doc_{i}")
         text      = build_text(inv)
         embedding = get_embedding(text)
         metadata  = build_metadata(inv)
@@ -291,14 +270,13 @@ def rebuild_index():
             ids=[invoice_number],
         )
         mark_embedded(invoice_number)
-        succeeded += 1
 
         party = inv.get("counterparty_name", "?")
-        print(f"  [{i+1:3d}/{total}]  "
+        print(f"  [{i+1:3d}/{len(invoices)}]  "
               f"{invoice_number:<12}  {inv.get('invoice_type','?'):<8}  {party}")
 
     print()
-    print(f"Done. {succeeded}/{total} invoices stored in ChromaDB.")
+    print(f"Done. {len(invoices)} invoices stored in ChromaDB at ./{CHROMA_DIR}/")
     print()
     _test_query(collection, "who supplies shark cartilage powder?",  "supplier")
     _test_query(collection, "which customers buy collagen from us?", "customer")

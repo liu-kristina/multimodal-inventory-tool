@@ -30,10 +30,10 @@ load_dotenv()
 
 CHROMA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "chroma_db")
 COLLECTION_NAME  = "invoices"
-ST_MODEL         = "all-mpnet-base-v2"
+ST_MODEL         = "all-MiniLM-L6-v2"   # 384-dim, 80MB — fits within Railway 1GB
 CLAUDE_MODEL     = "claude-sonnet-4-6"
 TOP_K            = 10      # number of invoices to retrieve per query
-MAX_TOKENS       = 1024
+MAX_TOKENS       = 2048
 
 # ── Clients (lazy — initialized on first use) ──────────────────────────────────
 
