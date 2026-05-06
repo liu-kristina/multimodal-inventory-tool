@@ -352,7 +352,7 @@ def generate_customer_invoice(invoice_number):
     for i, (label, value) in enumerate([
         ("Subtotal:", "USD " + "{:,.2f}".format(subtotal)),
         ("Shipping:", "USD " + "{:,.2f}".format(shipping_cost)),
-        ("Tax:", "USD 0.00  (resale exempt)"),
+        ("Tax:", "USD 0.00"),
         ("Total Due:", "USD " + "{:,.2f}".format(grand_total)),
     ]):
         pdf.set_x(120)
@@ -365,6 +365,13 @@ def generate_customer_invoice(invoice_number):
             pdf.set_font("Helvetica", "", 10)
         pdf.cell(40, 6, label, align="R", ln=False)
         pdf.cell(30, 6, value, align="R", ln=True)
+
+    # Tax exempt note on its own full-width line below totals
+    pdf.set_font("Helvetica", "I", 9)
+    pdf.set_text_color(110, 110, 110)
+    pdf.set_x(20)
+    pdf.cell(0, 6, "* Tax exempt - resale certificate on file", ln=True)
+    pdf.set_text_color(30, 30, 30)
 
     pdf.ln(5)
     draw_divider(pdf)

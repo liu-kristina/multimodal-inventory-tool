@@ -1,0 +1,17 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY database.py .
+COPY agents/ ./agents/
+COPY pipeline/ ./pipeline/
+
+# Data directories are mounted as volumes — not baked into the image
+RUN mkdir -p data/invoices data/customer_invoices chroma_db
+
+CMD ["python", "-m", "agents.invoice_agent", "--watch"]

@@ -1,0 +1,297 @@
+"""
+Step 4 — RAG query layer.
+
+Retrieves relevant invoices from ChromaDB and passes them to Claude
+to generate a natural language answer.
+
+Setup:
+    pip install anthropic sentence-transformers chromadb python-dotenv
+
+Add to your .env file:
+    ANTHROPIC_API_KEY=your-key-here
+
+Run interactively:
+    python rag_query.py
+
+Or import and use in your app:
+    from rag_query import ask
+    answer = ask("who supplies shark cartilage powder?")
+"""
+
+import os
+import chromadb
+import anthropic
+from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ── Config ─────────────────────────────────────────────────────────────────────
+
+CHROMA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "chroma_db")
+COLLECTION_NAME  = "invoices"
+ST_MODEL         = "all-MiniLM-L6-v2"   # 384-dim, 80MB — fits within Railway 1GB
+CLAUDE_MODEL     = "claude-sonnet-4-6"
+TOP_K            = 10      # number of invoices to retrieve per query
+MAX_TOKENS       = 2048
+
+# ── Clients (lazy — initialized on first use) ──────────────────────────────────
+
+_st_model         = None
+_anthropic_client = None
+_collection       = None
+
+
+def _get_st_model() -> SentenceTransformer:
+    global _st_model
+    if _st_model is None:
+        _st_model = SentenceTransformer(ST_MODEL)
+    return _st_model
+
+
+def _get_anthropic():
+    global _anthropic_client
+    if _anthropic_client is None:
+        _anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    return _anthropic_client
+
+
+def _get_collection():
+    global _collection
+    if _collection is None:
+        chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
+        try:
+            _collection = chroma_client.get_collection(COLLECTION_NAME)
+        except Exception as exc:
+            raise RuntimeError(
+                "The invoice search index has not been built yet. "
+                "Run the embedding step to create the ChromaDB 'invoices' collection."
+            ) from exc
+    return _collection
+
+
+# ── Step 1: Intent detection ───────────────────────────────────────────────────
+
+def detect_intent(query: str) -> str:
+    """
+    Classify the query to decide which invoices to search.
+    Returns 'supplier', 'customer', or 'all'.
+    """
+    q = query.lower()
+
+    supplier_signals = [
+        "supplier", "supplies", "supply", "who makes", "who produces",
+        "lead time", "port", "shipment", "from china", "manufacturer",
+        "source", "vendor", "reorder", "order from", "purchase from",
+    ]
+    customer_signals = [
+        "customer", "client", "buyer", "buys", "purchases", "who buys",
+        "who orders", "sells to", "selling to", "who do we sell",
+    ]
+
+    supplier_score = sum(1 for w in supplier_signals if w in q)
+    customer_score = sum(1 for w in customer_signals if w in q)
+
+    if customer_score > supplier_score:
+        return "customer"
+    elif supplier_score > 0:
+        return "supplier"
+    else:
+        return "all"
+
+
+# ── Step 2: Retrieve relevant invoices ────────────────────────────────────────
+
+def get_embedding(text: str) -> list:
+    return _get_st_model().encode(text, normalize_embeddings=True).tolist()
+
+
+def retrieve(query: str, intent: str, n: int = TOP_K) -> list:
+    """
+    Query ChromaDB and return the top N most relevant invoice documents.
+    Filters by invoice type based on detected intent.
+    Excludes self-referential results where California Nutraceuticals
+    appears as a customer (data entry quirk).
+    """
+    embedding    = get_embedding(query)
+    query_params = {
+        "query_embeddings": [embedding],
+        "n_results":        n,
+        "include":          ["documents", "metadatas", "distances"],
+    }
+    if intent in ("supplier", "customer"):
+        query_params["where"] = {"invoice_type": intent}
+
+    results = _get_collection().query(**query_params)
+
+    retrieved = []
+    for doc, meta, dist in zip(
+            results["documents"][0],
+            results["metadatas"][0],
+            results["distances"][0]):
+        # Skip invoices where we are listed as our own customer
+        customer_name = meta.get("customer_name", "").lower()
+        if "california nutraceuticals" in customer_name:
+            continue
+        retrieved.append({
+            "text":     doc,
+            "metadata": meta,
+            "score":    round(1 - dist, 3),
+        })
+    return retrieved
+
+
+# ── Step 3: Format context for Claude ─────────────────────────────────────────
+
+def format_context(retrieved: list) -> str:
+    """
+    Format the retrieved invoice summaries into a clean context block
+    for Claude to read.
+    """
+    lines = []
+    for i, item in enumerate(retrieved):
+        meta  = item["metadata"]
+        score = item["score"]
+        inv_type = meta.get("invoice_type", "")
+        inv_num  = meta.get("invoice_number", "")
+
+        lines.append(f"--- Invoice {i+1} (relevance: {score}) ---")
+        lines.append(item["text"])
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# ── Step 4: Generate answer with Claude ───────────────────────────────────────
+
+SYSTEM_PROMPT = """You are a helpful assistant for California Nutraceuticals Inc., 
+a raw material distributor based in Los Angeles that sources products from Chinese 
+suppliers and sells to American nutraceutical brands.
+
+IMPORTANT — understand the two invoice types:
+- SUPPLIER invoices: California Nutraceuticals is the BUYER. The counterparty is a supplier (e.g. a Chinese manufacturer). These tell you who WE buy from.
+- CUSTOMER invoices: California Nutraceuticals is the SELLER. The counterparty is a customer (e.g. an American brand). These tell you who buys FROM US.
+
+If you see "California Nutraceuticals" appearing as a customer name in an invoice, ignore it — this is a data entry quirk and does not represent a real external customer.
+
+When answering questions:
+- Be specific — mention supplier names, product names, prices, and lead times
+- If multiple invoices reference the same supplier or customer, list that supplier or customer only once
+- For lead time questions, give the specific days and typical range
+- For price questions, give the actual unit prices from the invoices
+- If the answer isn't in the provided invoices, say so clearly
+- Keep answers concise and practical — this is a business tool
+"""
+
+def generate_answer(query: str, context: str) -> str:
+    """Pass the query and retrieved context to Claude and return the answer."""
+    message = _get_anthropic().messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=MAX_TOKENS,
+        system=SYSTEM_PROMPT,
+        messages=[
+            {
+                "role": "user",
+                "content": f"""Here are the most relevant invoices from our records:
+
+{context}
+
+Question: {query}"""
+            }
+        ]
+    )
+    return message.content[0].text
+
+
+# ── Main RAG function ──────────────────────────────────────────────────────────
+
+def ask(query: str, verbose: bool = False) -> str:
+    """
+    Full RAG pipeline:
+    1. Detect intent (supplier / customer / all)
+    2. Retrieve relevant invoices from ChromaDB
+    3. Format as context
+    4. Generate answer with Claude
+
+    Args:
+        query:   Natural language question about invoices
+        verbose: If True, print retrieved invoices before the answer
+
+    Returns:
+        Claude's answer as a string
+    """
+    intent    = detect_intent(query)
+    retrieved = retrieve(query, intent)
+    context   = format_context(retrieved)
+
+    if verbose:
+        print(f"\nIntent detected: {intent}")
+        print(f"Retrieved {len(retrieved)} invoices:")
+        for item in retrieved:
+            meta  = item["metadata"]
+            party = meta.get("supplier_name") or meta.get("customer_name") or "?"
+            print(f"  score={item['score']:.3f}  "
+                  f"{meta.get('invoice_number','?'):<12}  {party}")
+        print()
+
+    return generate_answer(query, context)
+
+
+# ── Interactive mode ───────────────────────────────────────────────────────────
+
+def run_interactive():
+    """Run a simple interactive Q&A loop in the terminal."""
+    print("=" * 60)
+    print("California Nutraceuticals — Invoice Assistant")
+    print("Type 'quit' to exit, 'verbose' to toggle debug output")
+    print("=" * 60)
+    print()
+
+    verbose = False
+
+    #Run a set of demo queries first
+    demo_queries = [
+         "who supplies shark cartilage powder?",
+        "what is the lead time from Jiaxing Natural Products?",
+         "which customers buy collagen from us?",
+         "what is the best price we have paid for shark cartilage?",
+        "which customer is in Boulder Colorado?",
+     ]
+
+    print("Running demo queries...\n")
+    for query in demo_queries:
+        print(f"Q: {query}")
+        answer = ask(query, verbose=verbose)
+        print(f"A: {answer}")
+        print()
+
+    # Interactive loop
+    print("-" * 60)
+    print("Now ask your own questions:")
+    print()
+
+    while True:
+        try:
+            query = input("Q: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nGoodbye.")
+            break
+
+        if not query:
+            continue
+        if query.lower() == "quit":
+            print("Goodbye.")
+            break
+        if query.lower() == "verbose":
+            verbose = not verbose
+            print(f"Verbose mode: {'on' if verbose else 'off'}")
+            continue
+
+        answer = ask(query, verbose=verbose)
+        print(f"A: {answer}")
+        print()
+
+
+if __name__ == "__main__":
+    run_interactive()
+
