@@ -297,7 +297,7 @@ def get_pending_drafts() -> list[dict]:
 
 
 def send_procurement_draft(draft_id: str) -> str:
-    from email_feedback_agent import send_email, build_recommendation_subject
+    from agents.email_feedback_agent import send_email, build_recommendation_subject
 
     conn = get_connection()
     try:
@@ -428,7 +428,7 @@ def create_order_approval_draft(recommendation_id: int) -> str:
 
 
 def send_order_approval_draft(draft_id: str) -> str:
-    from email_feedback_agent import send_email
+    from agents.email_feedback_agent import send_email
 
     to = os.getenv("USER_APPROVAL_EMAIL") or os.getenv("TEST_EMAIL")
     if not to:
@@ -496,7 +496,7 @@ def send_order_approval_draft(draft_id: str) -> str:
 
 
 def send_supplier_order_email(draft_id: str) -> str:
-    from email_feedback_agent import send_email
+    from agents.email_feedback_agent import send_email
 
     conn = get_connection()
     try:
@@ -539,7 +539,7 @@ def send_supplier_order_email(draft_id: str) -> str:
 
 
 def check_procurement_replies() -> str:
-    from email_feedback_agent import fetch_procurement_replies, parse_reply
+    from agents.email_feedback_agent import fetch_procurement_replies, parse_reply
 
     replies = fetch_procurement_replies()
     if not replies:
@@ -1117,7 +1117,7 @@ def send_no_alternative_notification(rec_id: int) -> str:
     The email body presents three human-actionable options:
       APPROVE ANYWAY / PROVIDE NEW QUOTE / STOP PURCHASE
     """
-    from email_feedback_agent import send_email
+    from agents.email_feedback_agent import send_email
 
     to = os.getenv("USER_APPROVAL_EMAIL") or os.getenv("TEST_EMAIL")
     if not to:

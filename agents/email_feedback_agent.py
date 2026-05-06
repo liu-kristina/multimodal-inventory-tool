@@ -98,7 +98,7 @@ def is_user_reply(sender: str) -> bool:
 # ── Fetch replies ──────────────────────────────────────────────────────────────
 
 def _fetch_replies(anchors: tuple, require_user_reply: bool) -> list:
-    from invoice_agent import connect_gmail
+    from agents.invoice_agent import connect_gmail
     mail = connect_gmail()
     mail.select("INBOX")
 

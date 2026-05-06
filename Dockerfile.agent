@@ -8,10 +8,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY database.py .
+COPY cli.py .
 COPY agents/ ./agents/
 COPY pipeline/ ./pipeline/
+COPY scripts/ ./scripts/
 
-# Data directories are mounted as volumes — not baked into the image
-RUN mkdir -p data/invoices data/customer_invoices chroma_db
+# Create mount points — actual data lives on Railway volumes, not in the image
+RUN mkdir -p /app/data/invoices /app/data/customer_invoices /app/chroma_db
 
-CMD ["python", "-m", "agents.invoice_agent", "--watch"]
+CMD ["python", "cli.py", "agent", "watch"]

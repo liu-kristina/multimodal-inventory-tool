@@ -31,7 +31,7 @@ def cmd_init_db(args):
 
 def cmd_agent_once(args):
     """Check Gmail once, process all unread invoice emails, then exit."""
-    from invoice_agent import process_invoices
+    from agents.invoice_agent import process_invoices
     from scripts.run_pipeline import run_pipeline_from_gmail_invoices
 
     result = process_invoices()
@@ -55,11 +55,11 @@ def cmd_agent_once(args):
 def cmd_agent_watch(args):
     """Poll Gmail on a loop (every POLL_INTERVAL seconds). Ctrl-C to stop."""
     try:
-        from invoice_agent import start_watch
+        from agents.invoice_agent import start_watch
         start_watch()
     except ImportError:
         import time
-        from invoice_agent import run_once, POLL_INTERVAL
+        from agents.invoice_agent import run_once, POLL_INTERVAL
         print(f"Watching Gmail every {POLL_INTERVAL // 60} minutes... (Ctrl-C to stop)")
         while True:
             try:
@@ -95,7 +95,7 @@ def cmd_app(args):
 
 def _process_quote_reply(r: dict, mark_done_fn) -> None:
     """Process one supplier quote-reply dict through the full quote->recommendation flow."""
-    from email_feedback_agent import parse_reply
+    from agents.email_feedback_agent import parse_reply
     from database import (
         is_message_processed, save_user_feedback,
         has_feedback_for_run, get_connection, _execute,
@@ -163,7 +163,7 @@ def _process_quote_reply(r: dict, mark_done_fn) -> None:
             print(f"[QUOTE] Received quote for {product_name} from {draft_row['supplier']}")
             print(f"[WAIT] Waiting for more quotes ({quote_received_count}/{supplier_count})")
         else:
-            from procurement_agent import extract_quote_fields, run_recommendation_from_quote
+            from agents.procurement_agent import extract_quote_fields, run_recommendation_from_quote
 
             quote_fields = extract_quote_fields(r["body"])
             result = run_recommendation_from_quote(conn, rec_id, quote_fields)
@@ -196,7 +196,7 @@ def _process_quote_reply(r: dict, mark_done_fn) -> None:
 
 def _process_approval_reply(r: dict, mark_done_fn) -> None:
     """Process one internal approval-reply dict through the approval->order flow."""
-    from email_feedback_agent import parse_reply
+    from agents.email_feedback_agent import parse_reply
     from database import (
         is_message_processed, save_user_feedback,
         has_feedback_for_run, get_connection, _execute,
@@ -247,7 +247,7 @@ def _process_approval_reply(r: dict, mark_done_fn) -> None:
         rec_full = dict(rec_full_row) if rec_full_row else {}
 
         def _mk_memory(user_action: str, outcome_status: str) -> dict:
-            from procurement_agent import _parse_memory_fields_from_reason
+            from agents.procurement_agent import _parse_memory_fields_from_reason
             mf = _parse_memory_fields_from_reason(rec_full.get("reason", ""))
             return {
                 "product_name":          product_name,
@@ -276,7 +276,7 @@ def _process_approval_reply(r: dict, mark_done_fn) -> None:
             conn.commit()
             if action == "APPROVE ANYWAY":
                 print(f"[APPROVAL] override approved — {product_name}")
-                from procurement_agent import create_order_approval_draft, send_supplier_order_email
+                from agents.procurement_agent import create_order_approval_draft, send_supplier_order_email
                 order_draft_id = create_order_approval_draft(rec_id)
                 _execute(conn, "UPDATE procurement_email_drafts SET status = 'approved' WHERE id = ?", (order_draft_id,))
                 conn.commit()
@@ -284,7 +284,7 @@ def _process_approval_reply(r: dict, mark_done_fn) -> None:
                 _memory_kwargs = _mk_memory("APPROVE_ANYWAY", "order_sent")
             else:
                 print(f"[APPROVAL] approved — {product_name}")
-                from procurement_agent import send_supplier_order_email
+                from agents.procurement_agent import send_supplier_order_email
                 order_result = send_supplier_order_email(r["run_id"])
                 _memory_kwargs = _mk_memory("APPROVE", "order_sent")
             print(f"[ORDER SENT] {order_result}")
@@ -313,7 +313,7 @@ def _process_approval_reply(r: dict, mark_done_fn) -> None:
             print(f"[APPROVAL] pending_new_quote — {product_name}")
             _memory_kwargs = _mk_memory("PROVIDE_NEW_QUOTE", "pending_new_quote")
 
-            from procurement_agent import extract_quote_fields, run_recommendation_from_quote
+            from agents.procurement_agent import extract_quote_fields, run_recommendation_from_quote
 
             quote_fields = extract_quote_fields(r["body"])
             result = run_recommendation_from_quote(conn, rec_id, quote_fields)
@@ -362,7 +362,7 @@ def _handle_rejection_fallback(conn, product_name, rec_id, rejected_supplier):
        with APPROVE ANYWAY / PROVIDE NEW QUOTE / STOP PURCHASE options.
     Does NOT send supplier orders automatically.
     """
-    from procurement_agent import (
+    from agents.procurement_agent import (
         find_alternative_recommendation,
         rank_fallback_suppliers,
         send_no_alternative_notification,
@@ -429,9 +429,9 @@ def _handle_rejection_fallback(conn, product_name, rec_id, rejected_supplier):
 
 def cmd_feedback_once(args):
     """Fetch procurement reply emails once and print parsed feedback."""
-    from email_feedback_agent import fetch_quote_replies, fetch_procurement_replies
+    from agents.email_feedback_agent import fetch_quote_replies, fetch_procurement_replies
     from database import mark_message_processed
-    from invoice_agent import connect_gmail, mark_as_read
+    from agents.invoice_agent import connect_gmail, mark_as_read
 
     quote_replies    = fetch_quote_replies()
     approval_replies = fetch_procurement_replies()
@@ -457,7 +457,7 @@ def cmd_feedback_once(args):
 def cmd_route_gmail_watch(args):
     """Loop forever, calling run_label_routing() every 10 seconds. Ctrl-C to stop."""
     import time
-    from email_router import run_label_routing
+    from agents.email_router import run_label_routing
 
     print("[WATCH] Starting Gmail label watch mode. Press Ctrl-C to stop.")
     try:
@@ -588,7 +588,7 @@ def cmd_agent_watch_test(args):
 
 def cmd_supplier_email_test(args):
     """Verify resolve_supplier_email across all resolution paths."""
-    from procurement_agent import resolve_supplier_email, SUPPLIER_EMAILS
+    from agents.procurement_agent import resolve_supplier_email, SUPPLIER_EMAILS
     from database import get_connection, _execute, init_db
 
     print("[SUPPLIER EMAIL TEST] Setting up...")
@@ -852,7 +852,7 @@ def cmd_demo_check(args):
         all_pass = all_pass and ok_hap
         print(f"  {'PASS' if ok_hap else 'FAIL'}  Hyaluronic Acid Powder has no alternative rec (forces no-alt path)")
 
-        from procurement_agent import SUPPLIER_EMAILS
+        from agents.procurement_agent import SUPPLIER_EMAILS
         _real_suppliers = [s for s in SUPPLIER_EMAILS if s != "Demo Supplier"]
         _email_ok = True
         for _sup in _real_suppliers:
@@ -923,7 +923,7 @@ def run_procurement_once_core() -> dict:
     behaviour.  Dedup lives in draft_procurement_emails(); this function
     just coordinates create -> send.
     """
-    from procurement_agent import ProcurementAgent, get_pending_drafts, send_procurement_draft
+    from agents.procurement_agent import ProcurementAgent, get_pending_drafts, send_procurement_draft
 
     result = ProcurementAgent().run()
 
@@ -991,7 +991,7 @@ def route_gmail_once_core() -> None:
     Single source of truth for Gmail routing — called by cmd_route_gmail_once
     and the agent-watch loop so both produce identical behaviour.
     """
-    from email_router import run_label_routing
+    from agents.email_router import run_label_routing
     print("[ROUTE] Connecting to Gmail and routing by label...")
     run_label_routing()
     print("[ROUTE] Done.")
@@ -1420,7 +1420,7 @@ def cmd_strategy_test(args):
     D. Primary supplier approved   -> recommendation status transitions to order_sent
     """
     from database import get_connection, _execute, init_db
-    from procurement_agent import get_primary_supplier_for_product, find_alternative_recommendation
+    from agents.procurement_agent import get_primary_supplier_for_product, find_alternative_recommendation
 
     PRODUCT = "StratTest Widget"
 
@@ -1550,7 +1550,7 @@ def cmd_procurement_action_test(args):
     import types
     import os
     from database import get_connection, _execute, init_db
-    from procurement_agent import run_recommendation_from_quote
+    from agents.procurement_agent import run_recommendation_from_quote
 
     print("[PROCUREMENT ACTION TEST] Initialising...")
     init_db()
@@ -1657,7 +1657,7 @@ def cmd_procurement_action_test(args):
 
         # ── Test E ────────────────────────────────────────────────────────────
         print("\n[TEST E] APPROVE ANYWAY sends supplier order via create_order_approval_draft")
-        from procurement_agent import create_order_approval_draft, send_supplier_order_email
+        from agents.procurement_agent import create_order_approval_draft, send_supplier_order_email
         aa_rec_id = _execute(conn,
             "INSERT INTO procurement_recommendations "
             "(product_name, supplier, supplier_email, current_stock_kg, reorder_at_kg, "
@@ -1734,7 +1734,7 @@ def cmd_email_loop_test(args):
     import types
     import os
     from database import get_connection, _execute, init_db
-    from procurement_agent import (
+    from agents.procurement_agent import (
         extract_quote_fields,
         run_recommendation_from_quote,
         find_alternative_recommendation,
@@ -2079,7 +2079,7 @@ def cmd_business_demo_test(args):
     import types
     import os
     from database import get_connection, _execute, init_db, _use_postgres
-    from procurement_agent import (
+    from agents.procurement_agent import (
         extract_quote_fields,
         run_recommendation_from_quote,
         find_alternative_recommendation,
@@ -2366,7 +2366,7 @@ def cmd_business_demo_test(args):
 def cmd_memory_status(args):
     """Print supplier memory summary: approvals, rejections, scores, recent reject reasons."""
     from database import get_connection, _execute
-    from procurement_agent import get_supplier_memory_score
+    from agents.procurement_agent import get_supplier_memory_score
 
     conn = get_connection()
     try:
@@ -2416,7 +2416,7 @@ def cmd_memory_status(args):
 def cmd_memory_test(args):
     """Seed fake feedback records and verify supplier scoring with PASS/FAIL output."""
     from database import get_connection, _execute, record_procurement_memory, init_db
-    from procurement_agent import get_supplier_memory_score
+    from agents.procurement_agent import get_supplier_memory_score
 
     print("[MEMORY TEST] Initialising DB...")
     init_db()
@@ -2507,7 +2507,7 @@ def _make_mock_email_msg():
 
 def cmd_route_test(args):
     """Simulate all four Gmail label routing flows without a real Gmail connection."""
-    from email_router import simulate_label_routing
+    from agents.email_router import simulate_label_routing
 
     invoice_mock = {
         "message_id": "mock-invoice-001",

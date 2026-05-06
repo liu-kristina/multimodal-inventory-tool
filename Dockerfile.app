@@ -13,10 +13,11 @@ COPY agents/ ./agents/
 COPY pages/ ./pages/
 COPY pipeline/ ./pipeline/
 COPY assets/ ./assets/
+COPY scripts/ ./scripts/
 COPY data/ ./data/
 
-# Ensure runtime directories exist; chroma_db can be backed by a volume.
-RUN mkdir -p data/invoices data/customer_invoices chroma_db
+# Create mount points — actual data lives on Railway volumes, not in the image
+RUN mkdir -p /app/data/invoices /app/data/customer_invoices /app/chroma_db
 
 EXPOSE 8050
 

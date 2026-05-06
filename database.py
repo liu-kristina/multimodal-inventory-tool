@@ -6,7 +6,7 @@ Postgres is used when DATABASE_URL is set in the environment.
 SQLite is used as fallback for local development and CI.
 
 Postgres:  set DATABASE_URL=postgresql://user:pass@host:5432/dbname
-SQLite:    set DB_PATH=/path/to/inventory.db  (or leave as default)
+SQLite:    set DB_PATH=/path/to/inventory.db  (default: /app/data/inventory.db)
 """
 
 import os
@@ -14,7 +14,7 @@ import sqlite3
 from pathlib import Path
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
-DB_PATH      = os.environ.get("DB_PATH", str(Path(__file__).parent / "inventory.db"))
+DB_PATH      = os.environ.get("DB_PATH", "/app/data/inventory.db")
 
 _use_postgres = bool(DATABASE_URL)
 
@@ -185,6 +185,33 @@ def init_db():
                 created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS processed_messages (
+                id         SERIAL PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                label      TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (message_id, label)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS procurement_memory (
+                id                     SERIAL PRIMARY KEY,
+                product_name           TEXT NOT NULL,
+                supplier               TEXT NOT NULL,
+                supplier_email         TEXT,
+                unit_price             REAL,
+                lead_time              TEXT,
+                shipping_cost          REAL,
+                estimated_total_cost   REAL,
+                recommendation_action  TEXT,
+                user_action            TEXT,
+                user_reason            TEXT,
+                outcome_status         TEXT,
+                run_id                 TEXT,
+                created_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
     else:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS stock (
@@ -285,6 +312,33 @@ def init_db():
                 parsed_quantity REAL,
                 parsed_reason   TEXT,
                 created_at      TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS processed_messages (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT NOT NULL,
+                label      TEXT NOT NULL DEFAULT '',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (message_id, label)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS procurement_memory (
+                id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_name           TEXT NOT NULL,
+                supplier               TEXT NOT NULL,
+                supplier_email         TEXT,
+                unit_price             REAL,
+                lead_time              TEXT,
+                shipping_cost          REAL,
+                estimated_total_cost   REAL,
+                recommendation_action  TEXT,
+                user_action            TEXT,
+                user_reason            TEXT,
+                outcome_status         TEXT,
+                run_id                 TEXT,
+                created_at             TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -489,6 +543,120 @@ def seed_products():
         _executemany(conn, "INSERT OR IGNORE INTO products (product_name) VALUES (?)", products)
     conn.commit()
     conn.close()
+
+
+# ── Email dedup & feedback ─────────────────────────────────────────────────────
+
+def is_message_processed(message_id: str, label: str = "") -> bool:
+    """Return True if this message_id + label has already been processed."""
+    conn = get_connection()
+    try:
+        row = _execute(
+            conn,
+            "SELECT id FROM processed_messages WHERE message_id = ? AND label = ?",
+            (str(message_id), label),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def mark_message_processed(message_id: str, label: str = "") -> None:
+    """Record a message as processed to prevent duplicate handling."""
+    conn = get_connection()
+    try:
+        if _use_postgres:
+            _execute(
+                conn,
+                "INSERT INTO processed_messages (message_id, label) VALUES (?, ?) ON CONFLICT DO NOTHING",
+                (str(message_id), label),
+            )
+        else:
+            _execute(
+                conn,
+                "INSERT OR IGNORE INTO processed_messages (message_id, label) VALUES (?, ?)",
+                (str(message_id), label),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_user_feedback(
+    run_id: str,
+    message_id: str,
+    action: str,
+    supplier: str | None = None,
+    quantity: float | None = None,
+    reason: str | None = None,
+) -> None:
+    """Save a parsed procurement reply into procurement_replies."""
+    conn = get_connection()
+    try:
+        _execute(
+            conn,
+            """
+            INSERT INTO procurement_replies
+                (draft_id, sender, subject, raw_body, parsed_action,
+                 parsed_supplier, parsed_quantity, parsed_reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (run_id, "", "", "", action, supplier, quantity, reason),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def has_feedback_for_run(run_id: str) -> bool:
+    """Return True if procurement_replies already has a row for this run_id."""
+    conn = get_connection()
+    try:
+        row = _execute(
+            conn,
+            "SELECT id FROM procurement_replies WHERE draft_id = ?",
+            (run_id,),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def record_procurement_memory(
+    product_name: str,
+    supplier: str,
+    supplier_email: str | None = None,
+    unit_price: float | None = None,
+    lead_time: str | None = None,
+    shipping_cost: float | None = None,
+    estimated_total_cost: float | None = None,
+    recommendation_action: str | None = None,
+    user_action: str | None = None,
+    user_reason: str | None = None,
+    outcome_status: str | None = None,
+    run_id: str | None = None,
+) -> None:
+    """Record supplier performance data for future procurement decisions."""
+    conn = get_connection()
+    try:
+        _execute(
+            conn,
+            """
+            INSERT INTO procurement_memory
+                (product_name, supplier, supplier_email, unit_price, lead_time,
+                 shipping_cost, estimated_total_cost, recommendation_action,
+                 user_action, user_reason, outcome_status, run_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                product_name, supplier, supplier_email, unit_price, lead_time,
+                shipping_cost, estimated_total_cost, recommendation_action,
+                user_action, user_reason, outcome_status, run_id,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":

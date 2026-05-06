@@ -198,7 +198,7 @@ def _route_invoice(message: dict, document_type: str) -> None:
     Then runs the inventory pipeline on the extracted data.
     """
     try:
-        from invoice_agent import process_invoice_message
+        from agents.invoice_agent import process_invoice_message
     except ImportError:
         print(f"[ROUTING] invoice: invoice_agent unavailable (simulation mode) — skipping")
         return
@@ -233,7 +233,7 @@ def run_label_routing() -> None:
     - Invoice labels: marked read by this function after routing returns.
     """
     from database import mark_message_processed
-    from invoice_agent import connect_gmail, mark_as_read, add_gmail_label, INVOICE_LABEL
+    from agents.invoice_agent import connect_gmail, mark_as_read, add_gmail_label, INVOICE_LABEL
 
     mail = connect_gmail()
 
