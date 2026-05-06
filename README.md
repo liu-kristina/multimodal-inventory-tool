@@ -1,168 +1,121 @@
-# multimodal-inventory-tool
+# Multimodal Inventory Tool
 
-## Overview
+A multi-agent, human-in-the-loop system for small nutraceutical distributors that automates invoice processing, inventory tracking, and procurement decisions — built as a capstone project for the NLP and GenAI program at Easy Learning AI.
 
-This project builds a multi-agent, human-in-the-loop system that converts commercial invoices into structured transaction data and uses it to support inventory tracking and procurement decisions.
+**Live demo:** [multimodal-inventory-tool-production.up.railway.app](https://multimodal-inventory-tool-production.up.railway.app)
 
-The system processes both purchase and sales invoices, transforming unstructured documents into actionable insights through a pipeline of agents with visual interfaces.
+---
 
+## Background
 
-## Problem
+Small nutraceutical distributors like California Nutraceuticals — a fictional company used for demo purposes — act as the link between overseas manufacturers and American supplement brands. They receive dozens of supplier invoices a month, issue sales invoices to customers, and manually track inventory across spreadsheets and email threads.
 
+The pain points are real: invoices arrive as PDFs in Gmail, stock levels are updated manually, procurement decisions are made from memory, and supplier quotes are managed through ad-hoc email chains. One missed reorder or wrong unit price can directly impact margins and fulfillment.
 
-Small and medium-sized businesses often rely on manual workflows to:
+This project automates that entire workflow — from invoice arrival to procurement decision — while keeping a human in the loop at every critical step.
 
-* Process purchase and sales invoices
-* Update inventory records
-* Track stock levels and demand
-* Provide quotes
+---
 
-This leads to:
+## Stack
 
-* Inefficiency and manual effort
-* Data entry errors
-* Lack of real-time inventory visibility
-* Poor coordination between purchasing and sales
+| Layer | Tool |
+|-------|------|
+| Frontend | Dash + Dash Bootstrap Components |
+| AI reasoning | Claude (Anthropic) via `claude-sonnet-4-6` |
+| Embeddings | sentence-transformers `all-MiniLM-L6-v2` (local, no data leaves the server) |
+| Vector store | ChromaDB |
+| Structured data | PostgreSQL (Railway) / SQLite (local) |
+| PDF extraction | pdfplumber + PyMuPDF |
+| Email | Gmail IMAP + SMTP |
+| Deployment | Railway (Docker) |
+| CI/CD | GitHub Actions |
+| Monitoring | LangSmith |
 
+---
 
-## Solution
+## Agents
 
-We propose a multi-agent system that automates invoice understanding and inventory tracking while keeping humans in the loop.
+### Invoice Agent
+Monitors a Gmail inbox for unread emails with PDF attachments. When an invoice arrives, it extracts the PDF text using pdfplumber, sends it to Claude for structured extraction (invoice number, counterparty, line items, totals, lead times), and saves the result to Postgres. It also classifies each document as a supplier invoice (purchase) or customer invoice (sales) based on the roles of the parties — purchase invoices increase stock, sales invoices decrease it. The agent runs as a background thread toggled from the Agent Control page, or as a standalone Docker service via `cli.py agent watch`.
 
-## Data Schema
+### Procurement Agent
+Monitors stock levels against reorder thresholds. When a product falls below its reorder point, it drafts a Request for Quote (RFQ) email to the supplier and saves it as a pending draft. Drafts are reviewed and approved by a human on the Agent Control page before being sent. Once sent, the agent waits for the supplier's quote reply, parses the pricing and lead time, builds a recommendation, and sends an approval email to the business owner. The owner replies with `APPROVE`, `REJECT`, or `CHANGE` — and the agent handles each path, including fallback supplier logic on rejection.
 
-The system data model may include the following components:
+### Email Feedback Agent
+Handles the reply parsing layer for the procurement loop. It reads unread Gmail replies, filters by sender (only approved internal users can approve orders), extracts structured commands from the email body, and routes them back to the procurement agent. Supplier quote replies and internal approval replies are handled through separate Gmail label folders (`procurement/quote` and `procurement/approval`) to prevent misrouting.
 
-* **raw_documents**
-  Stores uploaded source files and metadata such as document ID, filename, file path, file type, and processing status.
+---
 
-* **extracted_invoices**
-  Stores invoice-level fields extracted from each document, such as invoice ID, document type, counterparty information, invoice date, currency, and total amount.
+## Invoice Chat (RAG)
 
-* **extracted_line_items**
-  Stores line-item level information, including product name, quantity, unit, unit price, and line total.
+The Invoice Assistant lets users ask natural language questions about the company's invoice history. It uses a Retrieval-Augmented Generation (RAG) pipeline: invoice text is embedded locally using sentence-transformers and stored in ChromaDB. When a question comes in, the most relevant invoices are retrieved and passed to Claude as context. Intent detection routes supplier questions to supplier invoices and customer questions to customer invoices automatically.
 
-* **shipping_logistics**
-  Stores logistics-related information when available, such as shipping method, origin, destination, shipment date, expected delivery date, actual delivery date, and lead time.
+Example questions:
+- *Who supplies shark cartilage powder?*
+- *What is the lead time from Jiaxing Natural Products?*
+- *Which customers buy collagen from us?*
+- *What is the best price we have paid for fish collagen peptides?*
+- *Draft a reorder email for shark cartilage powder*
 
-* **inventory_transactions**
-  Stores inventory movement records derived from invoices. Purchase invoices create positive stock changes, while sales invoices create negative stock changes.
+Invoice text is never sent to a third-party embedding service — all embeddings run locally on the server.
 
-* **inventory_master**
-  Stores the current inventory state for each normalized item, including current stock, reorder point, safety stock, and related inventory control fields.
+---
 
-* **supplier_catalog**
-  Stores supplier-side product information, such as supplier name, item description, quoted price, lead time, MOQ, and packaging details.
+## Pages
 
-* **knowledge_documents**
-  Stores text documents used for retrieval, such as invoice summaries, item descriptions, supplier descriptions, procurement notes, and policy text.
+- **Inventory** — live stock dashboard with low-stock alerts and recent inflow/outflow
+- **Invoice Chat** — natural language Q&A over the full invoice history
+- **Upload** — manual PDF invoice upload for direct processing
+- **Agent Control** — toggle the invoice agent, run commands, review procurement drafts, and view full approval history
+- **About** — team, business context, and privacy notice
 
-## Structured Data and Embedding Knowledge
+---
 
-The system uses both structured data and embedding-based knowledge.
+## Privacy
 
-### Structured Data
+Questions and relevant invoice excerpts are sent to the Claude API (Anthropic) to generate answers. Invoice text is never sent to a third-party embedding service — semantic search runs locally on the server using sentence-transformers.
 
-Structured data includes all exact values needed for operational logic and decision-making, such as:
+---
 
-* invoice fields
-* line-item values
-* quantities
-* prices
-* totals
-* lead times
-* inventory levels
-* reorder thresholds
+## Local Setup
 
-This data supports deterministic tasks such as inventory updates, stock calculations, and price comparison.
+```bash
+# 1. Clone and install
+git clone https://github.com/liu-kristina/multimodal-inventory-tool
+cd multimodal-inventory-tool
+pip install -r requirements.txt
 
-### Embedding Knowledge
+# 2. Set environment variables
+cp .env.example .env
+# Add: ANTHROPIC_API_KEY, GMAIL_ADDRESS, GMAIL_APP_PASSWORD, ALLOWED_USER_EMAILS
 
-Embedding-based knowledge is used for semantic retrieval and fuzzy matching. It may include:
+# 3. Initialise database and embeddings
+python database.py
+python pipeline/generate_embeddings.py --rebuild
 
-* item descriptions
-* invoice summaries
-* supplier descriptions
-* procurement notes
-* policy text
+# 4. Run the app
+python app.py
+```
 
-This layer supports tasks such as item matching, supplier discovery, retrieval-augmented question answering, and decision explanation.
+---
 
-## Design Principle
+## Deployment (Railway)
 
-The system follows a hybrid design:
+The app is deployed on Railway using two Docker services:
 
-* **Structured data** is used for precise calculations and business logic.
-* **Embedding-based knowledge** is used for semantic search and contextual retrieval.
+- `Dockerfile.app` — the Dash frontend
+- `Dockerfile.agent` — the background invoice watch agent
 
-This separation helps ensure both accuracy and flexibility in downstream agent workflows.
+Railway volumes persist ChromaDB (`/app/chroma_db`) and uploaded data (`/app/data`) across deploys. After first deploy:
 
-### Agent 1: Data Extraction Agent
+```bash
+railway run python pipeline/generate_embeddings.py --rebuild
+```
 
-* Input: invoice (PDF)
-* Performs OCR and parsing
-* Extracts structured data:
-  * invoice_id
-  * Classifies document type:
-        * purchase invoice
-        * sales invoice
-*Extracts structured data:
-    * invoice_id
-    * document_type
-    * counterparty_name (supplier or customer)
-    * invoice_date
-    * line items (item, quantity, price)
-    * ... (more to add)
-Output: standardized JSON
+---
 
-Visual interface:
-Users can review and edit extracted fields before confirming.
+## Team
 
+Built by Ying Huang, Kristina Liang, and Moxi Liang as the capstone project for the NLP and GenAI program at [Easy Learning AI](https://easylearningai.com).
 
-### Agent 2: Inventory Monitoring Agent
-
-* Input: confirmed structured invoice data
-* Converts invoices into inventory transactions:
-    * purchase -> stock increase
-    * sales -> stock decrease
-* Updates inventory records
-* Detects low-stock conditions
-
-Visual interface:
-Inventory dashboard with:
-
-* Current stock levels
-* Low-stock alerts
-* Summary of recent inflow and outflow
-
-
-### Agent 3: Procurement Recommendation Agent
-
-* Input: low-stock items, historical purchase data, and supplier catalog
-* Compares vendors based on:
-  * price
-  * lead time
-  * historical purchasing patterns
-* Recommends optimal purchasing options
-
-Visual interface:
-Vendor comparison table and recommendation view
-
-### Knowledge and Retrieval Layer
-
-* Extracted invoice data serves both operational and knowledge purposes.
-    * Structured data supports inventory updates and decision logic
-    * Selected records and summaries can be indexed for retrieval
-
-* A hybrid approach is used:
-
-    * Structured queries for:
-        * price
-        * quantity
-        * lead time
-    * Embedding-based retrieval for:
-        * item descriptions
-        * supplier offerings
-        * historical procurement patterns
-
-This enables question answering and decision explanation for procurement tasks.
+*All companies referenced in this application, including California Nutraceuticals and its suppliers and customers, are fictional and created for demo purposes only.*
