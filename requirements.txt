@@ -5,7 +5,7 @@ plotly==6.7.0
 
 # AI / embeddings
 anthropic==0.94.0
-openai==2.31.0
+sentence-transformers==5.4.1
 chromadb==1.5.7
 
 # PDF processing
