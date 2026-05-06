@@ -101,7 +101,7 @@ python app.py
 
 ## Deployment (Railway)
 
-The app is deployed on Railway using two Docker services:
+The app is deployed on [Railway](https://multimodal-inventory-tool-production.up.railway.app/) using two Docker services:
 
 - `Dockerfile.app` — the Dash frontend
 - `Dockerfile.agent` — the background invoice watch agent
