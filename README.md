@@ -116,6 +116,6 @@ railway run python pipeline/generate_embeddings.py --rebuild
 
 ## Team
 
-Built by Ying Huang, Kristina Liang, and Moxi Liang as the capstone project for the NLP and GenAI program at [Easy Learning AI](https://easylearningai.com).
+Built by Ying Huang, Kristina Liang, and Moxi Liang as the capstone project for the NLP and GenAI program at [Easy Learning AI](https://easylearning.ai).
 
 *All companies referenced in this application, including California Nutraceuticals and its suppliers and customers, are fictional and created for demo purposes only.*
