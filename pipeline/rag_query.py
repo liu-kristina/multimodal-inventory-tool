@@ -110,6 +110,8 @@ def retrieve(query: str, intent: str, n: int = TOP_K) -> list:
     """
     Query ChromaDB and return the top N most relevant invoice documents.
     Filters by invoice type based on detected intent.
+    Excludes self-referential results where California Nutraceuticals
+    appears as a customer (data entry quirk).
     """
     embedding    = get_embedding(query)
     query_params = {
@@ -127,6 +129,10 @@ def retrieve(query: str, intent: str, n: int = TOP_K) -> list:
             results["documents"][0],
             results["metadatas"][0],
             results["distances"][0]):
+        # Skip invoices where we are listed as our own customer
+        customer_name = meta.get("customer_name", "").lower()
+        if "california nutraceuticals" in customer_name:
+            continue
         retrieved.append({
             "text":     doc,
             "metadata": meta,
@@ -162,7 +168,13 @@ SYSTEM_PROMPT = """You are a helpful assistant for California Nutraceuticals Inc
 a raw material distributor based in Los Angeles that sources products from Chinese 
 suppliers and sells to American nutraceutical brands.
 
-You have access to the company's invoice history. When answering questions:
+IMPORTANT — understand the two invoice types:
+- SUPPLIER invoices: California Nutraceuticals is the BUYER. The counterparty is a supplier (e.g. a Chinese manufacturer). These tell you who WE buy from.
+- CUSTOMER invoices: California Nutraceuticals is the SELLER. The counterparty is a customer (e.g. an American brand). These tell you who buys FROM US.
+
+If you see "California Nutraceuticals" appearing as a customer name in an invoice, ignore it — this is a data entry quirk and does not represent a real external customer.
+
+When answering questions:
 - Be specific — mention supplier names, product names, prices, and lead times
 - If multiple invoices reference the same supplier or customer, list that supplier or customer only once
 - For lead time questions, give the specific days and typical range
@@ -282,3 +294,4 @@ def run_interactive():
 
 if __name__ == "__main__":
     run_interactive()
+
