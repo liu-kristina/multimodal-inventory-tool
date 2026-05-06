@@ -10,7 +10,7 @@ A multi-agent, human-in-the-loop system for small nutraceutical distributors tha
 
 Small nutraceutical distributors like California Nutraceuticals — a fictional company used for demo purposes — act as the link between overseas manufacturers and American supplement brands. They receive dozens of supplier invoices a month, issue sales invoices to customers, and manually track inventory across spreadsheets and email threads.
 
-The pain points are real: invoices arrive as PDFs in Gmail, stock levels are updated manually, procurement decisions are made from memory, and supplier quotes are managed through ad-hoc email chains. One missed reorder or wrong unit price can directly impact margins and fulfillment.
+The pain points are real: invoices arrive as PDFs in Gmail, stock levels are updated manually, procurement decisions are made from memory, and suppliers and customers are managed manually by paperwork. One missed reorder or wrong unit price can directly impact margins and fulfillment.
 
 This project automates that entire workflow — from invoice arrival to procurement decision — while keeping a human in the loop at every critical step.
 
@@ -64,7 +64,6 @@ Invoice text is never sent to a third-party embedding service — all embeddings
 
 - **Inventory** — live stock dashboard with low-stock alerts and recent inflow/outflow
 - **Invoice Chat** — natural language Q&A over the full invoice history
-- **Upload** — manual PDF invoice upload for direct processing
 - **Agent Control** — toggle the invoice agent, run commands, review procurement drafts, and view full approval history
 - **About** — team, business context, and privacy notice
 
