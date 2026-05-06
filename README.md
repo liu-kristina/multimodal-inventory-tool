@@ -29,7 +29,6 @@ This project automates that entire workflow — from invoice arrival to procurem
 | Email | Gmail IMAP + SMTP |
 | Deployment | Railway (Docker) |
 | CI/CD | GitHub Actions |
-| Monitoring | LangSmith |
 
 ---
 
