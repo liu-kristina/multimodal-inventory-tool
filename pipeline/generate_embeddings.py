@@ -1,6 +1,6 @@
 """
 Step 3 — Generate embeddings and store in ChromaDB.
-Uses sentence-transformers (all-MiniLM-L6-v2) for local, private embeddings.
+Uses sentence-transformers (all-mpnet-base-v2) for local, private embeddings.
 No data leaves your server — no OpenAI API key required.
 
 Now reads from SQLite instead of extracted_invoices.json.
@@ -19,8 +19,6 @@ Test queries:
     python generate_embeddings.py --query "who supplies shark cartilage powder?"
     python generate_embeddings.py --query "which customers buy collagen from us?"
     python generate_embeddings.py --query "what is the lead time from Jiaxing?"
-
-
 """
 
 import json
@@ -39,9 +37,9 @@ load_dotenv()
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-CHROMA_DIR      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "chroma_db")
+CHROMA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "chroma_db")
 COLLECTION_NAME = "invoices"
-ST_MODEL        = "all-MiniLM-L6-v2"  # 384-dim, ~80MB, runs on CPU
+ST_MODEL        = "all-mpnet-base-v2"  # 768-dim, better retrieval quality
 
 _st_model = None
 
