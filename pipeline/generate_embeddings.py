@@ -1,15 +1,13 @@
 """
 Step 3 — Generate embeddings and store in ChromaDB.
-Uses OpenAI text-embedding-3-small for high quality retrieval.
+Uses sentence-transformers (all-MiniLM-L6-v2) for local, private embeddings.
+No data leaves your server — no OpenAI API key required.
 
 Now reads from SQLite instead of extracted_invoices.json.
 Only embeds invoices that haven't been embedded yet (incremental).
 
 Setup:
-    pip install openai chromadb python-dotenv
-
-Add to your .env file:
-    OPENAI_API_KEY=your-key-here
+    pip install sentence-transformers chromadb python-dotenv
 
 Run (incremental — only embeds new invoices):
     python generate_embeddings.py
@@ -21,13 +19,15 @@ Test queries:
     python generate_embeddings.py --query "who supplies shark cartilage powder?"
     python generate_embeddings.py --query "which customers buy collagen from us?"
     python generate_embeddings.py --query "what is the lead time from Jiaxing?"
+
+
 """
 
 import json
 import sys
 import os
 import chromadb
-from openai import OpenAI
+from sentence_transformers import SentenceTransformer
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -39,27 +39,25 @@ load_dotenv()
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-CHROMA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "chroma_db")
+CHROMA_DIR      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "chroma_db")
 COLLECTION_NAME = "invoices"
-OPENAI_MODEL    = "text-embedding-3-small"
+ST_MODEL        = "all-MiniLM-L6-v2"  # 384-dim, ~80MB, runs on CPU
 
-_openai_client = None
+_st_model = None
 
-def _get_openai_client():
-    global _openai_client
-    if _openai_client is None:
-        _openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    return _openai_client
+def _get_st_model() -> SentenceTransformer:
+    """Lazy-load the model so startup is fast when not embedding."""
+    global _st_model
+    if _st_model is None:
+        print(f"Loading embedding model ({ST_MODEL})...")
+        _st_model = SentenceTransformer(ST_MODEL)
+    return _st_model
 
 
 # ── Embedding ──────────────────────────────────────────────────────────────────
 
 def get_embedding(text: str) -> list:
-    response = _get_openai_client().embeddings.create(
-        model=OPENAI_MODEL,
-        input=text,
-    )
-    return response.data[0].embedding
+    return _get_st_model().encode(text, normalize_embeddings=True).tolist()
 
 
 # ── Load full invoice from SQLite ──────────────────────────────────────────────
@@ -188,17 +186,12 @@ def build_metadata(inv: dict) -> dict:
 
 def embed_new_invoices():
     """Only embed invoices not yet in ChromaDB. Safe to run anytime."""
-    if not os.getenv("OPENAI_API_KEY"):
-        print("ERROR: OPENAI_API_KEY not found in .env")
-        sys.exit(1)
-
     unembedded = get_unembedded_invoices()
     if not unembedded:
         print("Nothing to embed — all invoices are already in ChromaDB.")
         return
 
     print(f"Found {len(unembedded)} new invoice(s) to embed.")
-    print(f"Estimated cost: ~${len(unembedded) * 0.00002:.4f} USD")
     print()
 
     chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
@@ -240,17 +233,12 @@ def embed_new_invoices():
 
 def rebuild_index():
     """Delete and rebuild the entire ChromaDB index from SQLite."""
-    if not os.getenv("OPENAI_API_KEY"):
-        print("ERROR: OPENAI_API_KEY not found in .env")
-        sys.exit(1)
-
     invoices = load_all_invoices()
     if not invoices:
         print("No invoices found in SQLite. Upload some invoices first.")
         return
 
     print(f"Rebuilding index from {len(invoices)} invoices in SQLite...")
-    print(f"Estimated cost: ~${len(invoices) * 0.00002:.4f} USD")
     print()
 
     chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
