@@ -9,7 +9,6 @@ import sys
 import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from pipeline.rag_query import ask
 
 dash.register_page(__name__, path="/chat", title="Chat")
 
@@ -194,6 +193,7 @@ def handle_message(n_clicks, n_submit, query, history):
 
     # Call RAG pipeline
     try:
+        from pipeline.rag_query import ask
         answer = ask(query)
     except Exception as e:
         answer = f"Sorry, something went wrong: {str(e)}"
