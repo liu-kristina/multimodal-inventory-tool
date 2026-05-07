@@ -174,6 +174,7 @@ def get_approval_history() -> dict:
                 r.parsed_action AS reply_action,
                 r.parsed_reason AS reply_reason,
                 r.parsed_supplier AS reply_supplier,
+                r.sender        AS reply_sender,
                 r.created_at    AS replied_at
             FROM procurement_email_drafts d
             LEFT JOIN procurement_replies r ON r.draft_id = d.id
@@ -346,6 +347,7 @@ def layout():
             detail_parts.append(f"Reason: {r['reply_reason']}")
         if r.get("reply_supplier"):
             detail_parts.append(f"New supplier: {r['reply_supplier']}")
+        sender = r.get("reply_sender", "")
         date_str = r.get("replied_at") or r.get("sent_at") or r.get("created_at") or ""
         return dbc.Row([
             dbc.Col(
@@ -355,6 +357,7 @@ def layout():
             dbc.Col([
                 html.P(r["product_name"], className="mb-0 fw-semibold", style={"fontSize": "13px"}),
                 html.Small(f"Supplier: {r['supplier']}", className="text-muted d-block"),
+                html.Small(f"Approved by: {sender}", className="text-muted d-block") if sender and not pending else None,
                 html.Small(", ".join(detail_parts), className="text-muted d-block") if detail_parts else None,
                 html.Small(date_str, className="text-muted"),
             ]),
@@ -692,31 +695,6 @@ def layout():
             ])
         ], className="mb-3"),
 
-        # ── Run log ──
-        html.P("Recent runs", style=label_style),
-        dbc.Card([
-            dbc.CardBody([
-                html.Div([
-                    dbc.Row([
-                        dbc.Col(
-                            html.Span("●", style={
-                                "color": "#1D9E75" if r["status"] == "ok" else "#E24B4A",
-                                "fontSize": "10px",
-                            }),
-                            width="auto",
-                        ),
-                        dbc.Col([
-                            html.P(r["message"], className="mb-0", style={"fontSize": "13px"}),
-                            html.Small(r["created_at"], className="text-muted"),
-                        ]),
-                    ], align="start", className="mb-2")
-                    for r in logs
-                ] if logs else [
-                    html.Small("No runs yet.", className="text-muted")
-                ])
-            ])
-        ]),
-
         html.Div(id="toggle-feedback"),
         html.Div(id="resolve-feedback"),
         html.Div(id="draft-feedback"),
@@ -791,7 +769,8 @@ def _render_approval_history(history: list) -> list:
                         html.Span(f"  {detail}", className="text-muted") if detail else None,
                     ], className="d-block"),
                     html.Small(
-                        f"Created: {h['created_at']}" + (f" · Replied: {h['reply_at']}" if h.get("reply_at") else ""),
+                        f"By: {h['sender']}  · " if h.get("sender") else ""
+                        + f"Created: {h['created_at']}" + (f" · Replied: {h['replied_at']}" if h.get("replied_at") else ""),
                         className="text-muted",
                     ),
                 ]),
@@ -1005,3 +984,4 @@ def resolve_flag(n_clicks):
 )
 def refresh_approval_history(n):
     return _render_approval_history(get_approval_history())
+
