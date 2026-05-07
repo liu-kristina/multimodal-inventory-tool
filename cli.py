@@ -30,43 +30,34 @@ def cmd_init_db(args):
 
 
 def cmd_agent_once(args):
-    """Check Gmail once, process all unread invoice emails, then exit."""
-    from agents.invoice_agent import process_invoices
-    from scripts.run_pipeline import run_pipeline_from_gmail_invoices
+    """Check Gmail once using label routing, then exit.
 
-    result = process_invoices()
-    if not result:
-        print("No new invoice emails.")
-        return
-
-    print(f"Processed {len(result)} invoice email(s).")
-    extracted = []
-    for r in result:
-        if isinstance(r, dict) and r.get("invoice_data"):
-            data = r["invoice_data"]
-            if isinstance(data, list):
-                extracted.extend(data)
-            else:
-                extracted.append(data)
-    if extracted:
-        run_pipeline_from_gmail_invoices(extracted)
+    Previously used process_invoices() (broad INBOX scan) which could pick up
+    every unread PDF email regardless of label and apply all their inventory
+    changes in one batch — the root cause of the duplicate-invoice bug.
+    Now delegates to route_gmail_once_core() so the same label-routing dedup
+    guards (RFC Message-ID pre-check, mark-read, inv_applied) are active.
+    """
+    route_gmail_once_core()
 
 
 def cmd_agent_watch(args):
-    """Poll Gmail on a loop (every POLL_INTERVAL seconds). Ctrl-C to stop."""
+    """Poll Gmail in a loop using label routing. Ctrl-C to stop.
+
+    This definition is shadowed at runtime by the cmd_agent_watch defined
+    later in this file (line ~503). It is kept here only as a safety net;
+    the broad-INBOX start_watch() call that was here previously has been
+    removed to prevent duplicate invoice processing.
+    """
+    import time
+    interval = getattr(args, "interval", 10)
+    print("[AGENT WATCH] Starting label-routing watch mode. Press Ctrl-C to stop.")
     try:
-        from agents.invoice_agent import start_watch
-        start_watch()
-    except ImportError:
-        import time
-        from agents.invoice_agent import run_once, POLL_INTERVAL
-        print(f"Watching Gmail every {POLL_INTERVAL // 60} minutes... (Ctrl-C to stop)")
         while True:
-            try:
-                run_once()
-            except Exception as e:
-                print(f"[ERROR] {e}")
-            time.sleep(POLL_INTERVAL)
+            route_gmail_once_core()
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print("[AGENT WATCH] Stopped by user.")
 
 
 def cmd_run_scenario(args):
@@ -257,6 +248,8 @@ def _process_approval_reply(r: dict, mark_done_fn) -> None:
                 "lead_time":             mf["lead_time"],
                 "shipping_cost":         mf["shipping_cost"],
                 "estimated_total_cost":  mf["estimated_total_cost"],
+                "availability":          mf["availability"],
+                "recommendation_id":     rec_id,
                 "recommendation_action": mf["recommendation_action"],
                 "user_action":           user_action,
                 "user_reason":           parsed.get("reason"),
@@ -297,10 +290,35 @@ def _process_approval_reply(r: dict, mark_done_fn) -> None:
             _memory_kwargs = _mk_memory("REJECT", "rejected")
             _handle_rejection_fallback(conn, product_name, rec_id, rejected_supplier)
         elif action == "CHANGE":
-            _execute(conn, "UPDATE procurement_email_drafts SET status = 'change_requested' WHERE id = ?", (r["run_id"],))
-            _execute(conn, "UPDATE procurement_recommendations SET status = 'change_requested', updated_at = CURRENT_TIMESTAMP WHERE id = ?", (rec_id,))
-            conn.commit()
-            print(f"[APPROVAL] change_requested — {product_name}")
+            new_supplier  = parsed.get("supplier")
+            new_email     = parsed.get("email")
+            change_reason = parsed.get("reason")
+
+            if not new_supplier:
+                print(
+                    f"[APPROVAL] change_requested — {product_name} — "
+                    f"missing Supplier: in reply; no RFQ sent. "
+                    f"Reply again with:\n"
+                    f"  CHANGE\n  Supplier: <name>\n  Email: <email>"
+                )
+            elif not new_email or "@" not in new_email:
+                print(
+                    f"[APPROVAL] change_requested — {product_name} — "
+                    f"missing or invalid Email: in reply; no RFQ sent.\n"
+                    f"Reply again with:\n"
+                    f"  CHANGE\n  Supplier: {new_supplier}\n  Email: <supplier@example.com>"
+                )
+            else:
+                _execute(conn, "UPDATE procurement_email_drafts SET status = 'change_requested' WHERE id = ?", (r["run_id"],))
+                _execute(conn, "UPDATE procurement_recommendations SET status = 'change_requested', updated_at = CURRENT_TIMESTAMP WHERE id = ?", (rec_id,))
+                conn.commit()
+                print(f"[APPROVAL] change_requested — {product_name} — sending RFQ to {new_supplier} <{new_email}>")
+                from agents.procurement_agent import create_and_send_change_rfq
+                change_result = create_and_send_change_rfq(
+                    product_name, new_supplier, new_email, reason=change_reason or ""
+                )
+                print(f"[CHANGE RFQ] {change_result}")
+                _memory_kwargs = _mk_memory("CHANGE", "change_rfq_sent")
         elif action == "STOP PURCHASE":
             _execute(conn, "UPDATE procurement_email_drafts SET status = 'stopped' WHERE id = ?", (r["run_id"],))
             _execute(conn, "UPDATE procurement_recommendations SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE id = ?", (rec_id,))
@@ -514,8 +532,10 @@ def cmd_agent_watch_test(args):
     _fake_efa = types.ModuleType("email_feedback_agent")
     _fake_efa.send_email = lambda to, subject, body: sent_emails.append({"to": to, "subject": subject})
     _fake_efa.build_recommendation_subject = lambda item, run_id: f"Reorder Suggestion - {item} [RUN_ID={run_id}]"
-    _prev_efa = sys.modules.get("email_feedback_agent")
-    sys.modules["email_feedback_agent"] = _fake_efa
+    _prev_efa        = sys.modules.get("email_feedback_agent")
+    _prev_agents_efa = sys.modules.get("agents.email_feedback_agent")
+    sys.modules["email_feedback_agent"]        = _fake_efa
+    sys.modules["agents.email_feedback_agent"] = _fake_efa
 
     PRODUCT = "NMC Powder"
     orig_qty: float | None = None
@@ -576,6 +596,10 @@ def cmd_agent_watch_test(args):
             sys.modules.pop("email_feedback_agent", None)
         else:
             sys.modules["email_feedback_agent"] = _prev_efa
+        if _prev_agents_efa is None:
+            sys.modules.pop("agents.email_feedback_agent", None)
+        else:
+            sys.modules["agents.email_feedback_agent"] = _prev_agents_efa
         if orig_qty is not None:
             conn = get_connection()
             try:
@@ -909,6 +933,20 @@ def cmd_demo_check(args):
             f"-> {_fcp_cat['supplier_email'] if _fcp_cat else 'MISSING'} "
             f"(run demo-seed if FAIL)"
         )
+
+        # Demo memory: FCP fallback supplier should have a seeded negative memory record
+        # so the recommendation shows a meaningful memory warning in Step 6.
+        from agents.procurement_agent import get_supplier_memory_score
+        _fcp_sup = _fcp_cat["supplier"] if _fcp_cat else "Shanghai BioSupply International"
+        _mem = get_supplier_memory_score(conn2, "Fish Collagen Peptides", _fcp_sup)
+        ok_mem = _mem["reject_count"] >= 1 and _mem["supplier_score"] < 0
+        all_pass = all_pass and ok_mem
+        print(
+            f"  {'PASS' if ok_mem else 'FAIL'}  "
+            f"FCP fallback supplier demo memory: score={_mem['supplier_score']:.1f}, "
+            f"rejections={_mem['reject_count']} "
+            f"(run demo-seed if FAIL)"
+        )
     finally:
         conn2.close()
 
@@ -1064,159 +1102,201 @@ def _seed_demo_procurement(conn, _execute_fn, _use_postgres):
 def _print_demo_instructions():
     sep = "=" * 65
     print(f"\n{sep}")
-    print("  LIVE DEMO SCRIPT — Gmail Label Routing")
+    print("  LIVE DEMO SCRIPT — California Nutraceuticals")
+    print("  Gmail Label-Based Procurement Workflow")
     print(sep)
     print("""
-Gmail Setup (one-time):
-  Create four labels in Gmail (Settings > Labels > Create new label):
-    sales/invoice
-    purchase/receipt
-    procurement/quote
-    procurement/approval
-  Set GMAIL_ADDRESS, GMAIL_APP_PASSWORD, USER_APPROVAL_EMAIL in .env
+Setup (run once before each demo):
+  python cli.py demo-seed
+  python scripts/generate_demo_invoices.py
+  python cli.py app                 # optional Dash UI (separate terminal)
 
-STEP 1  -  Sales Invoice (inventory decrease)
-  File : data/demo_pdfs/sales_invoice_INV_SALES_001.pdf
-  Action: Attach the PDF to an email and send it to yourself.
-          In Gmail, apply the label:  sales/invoice
-  Run  : python cli.py route-gmail-once
+Gmail labels required (Settings > Labels > Create new label):
+  sales/invoice
+  purchase/receipt
+  procurement/quote
+  procurement/approval
+Set GMAIL_ADDRESS, GMAIL_APP_PASSWORD, USER_APPROVAL_EMAIL in .env
+
+Routing command (manual mode):
+  python cli.py route-gmail-once    # or: python cli.py agent-watch
+
+--------------------------------------------------------------
+STEP 1  —  Sales Invoice  (two products go low-stock)
+--------------------------------------------------------------
+  File   : data/demo/customer_invoices/CUST-DEMO-001.pdf
+  Subject: [INV-SALES] Demo sales invoice CUST-DEMO-001
+  Action : Attach the PDF and send to yourself.
+           In Gmail, apply label:  sales/invoice
+  Run    : python cli.py route-gmail-once
   Expected output:
     [ROUTING] label=sales/invoice -> invoice_agent (sales)
-    [ROUTING] invoice extracted: #INV-SALES-001 ...
-  Inventory check:
-    python cli.py inventory-status
-  Expected: NMC Powder 24.0 kg  -> 19.0 kg  (below 20.0 kg reorder threshold)
+    [ROUTING] invoice extracted: #CUST-DEMO-001 ...
+  Inventory check:  python cli.py inventory-status
+  Expected changes:
+    Collagen Powder        450 kg  ->   70 kg  (below 120 kg reorder)
+    Fish Collagen Peptides 210 kg  ->  110 kg  (below 120 kg reorder)
 
-STEP 2  -  Purchase Receipt (inventory increase)
-  File : data/demo_pdfs/purchase_receipt_INV_PUR_001.pdf
-  Action: Attach the PDF to an email and send it to yourself.
-          In Gmail, apply the label:  purchase/receipt
-  Run  : python cli.py route-gmail-once
-  Expected output:
+--------------------------------------------------------------
+STEP 2  —  Run Procurement  (RFQs sent to primary suppliers)
+--------------------------------------------------------------
+  Run: python cli.py run-procurement
+  Expected:
+    [PROCUREMENT] RFQ sent for Collagen Powder  -> Pacific Rim BioMaterials Co.
+    [PROCUREMENT] RFQ sent for Fish Collagen Peptides -> Pacific Rim BioMaterials Co.
+  Note the RUN_ID printed for each product — needed in Steps 3 and 5.
+
+--------------------------------------------------------------
+STEP 3  —  Collagen Powder: good quote -> APPROVE -> order sent
+--------------------------------------------------------------
+  3a. Supplier quote
+      Send a plain-text email to yourself (replying under the Collagen Powder RFQ):
+        Subject : (keep or match the RFQ subject with its RUN_ID)
+        Body    :
+          Unit price: USD 66/kg
+          Availability: in stock
+          Lead time: 8 days
+          Shipping: USD 180
+          Quote valid for: 14 days
+      In Gmail, apply label:  procurement/quote
+      Run: python cli.py route-gmail-once
+      Expected:
+        [ROUTING] label=procurement/quote -> quote parser
+        [RECOMMENDATION] Product: Collagen Powder  Decision: NEEDS_HUMAN_REVIEW
+        [APPROVAL DRAFT] id=<draft_id> — approval email sent to USER_APPROVAL_EMAIL
+
+  3b. Human approval
+      Find the approval email and reply:
+        APPROVE
+      In Gmail, apply label:  procurement/approval
+      Run: python cli.py route-gmail-once
+      Expected:
+        [APPROVAL] approved -- Collagen Powder
+        [ORDER SENT] Sent supplier order email to Pacific Rim BioMaterials Co.
+      Inventory: unchanged until purchase receipt arrives (Step 4)
+
+--------------------------------------------------------------
+STEP 4  —  Collagen Powder purchase receipt  (stock restored)
+--------------------------------------------------------------
+  File   : data/demo/purchase_receipts/SUP-DEMO-COLLAGEN-001.pdf
+  Subject: [INV-PURCHASE] Demo purchase receipt SUP-DEMO-COLLAGEN-001
+  Action : Attach the PDF and send to yourself.
+           In Gmail, apply label:  purchase/receipt
+  Run    : python cli.py route-gmail-once
+  Expected:
     [ROUTING] label=purchase/receipt -> invoice_agent (purchase)
-    [ROUTING] invoice extracted: #INV-PUR-001 ...
-  Inventory check:
-    python cli.py inventory-status
-  Expected: Graphite Anode  50.0 kg  ->  70.0 kg
+    [ROUTING] invoice extracted: #SUP-DEMO-COLLAGEN-001 ...
+  Inventory check:  python cli.py inventory-status
+  Expected changes:
+    Collagen Powder         70 kg  ->  470 kg  (+400 kg received)
+    Fish Collagen Peptides 110 kg  unchanged
 
-STEP 3  -  Procurement Quote (quote parsing + recommendation)
-  After Step 1, NMC Powder (19.0 kg) is below reorder threshold (20.0 kg).
-  If using agent-watch: the agent auto-detects low stock and sends an RFQ to
-  Demo Supplier. Check the RFQ subject line in your sent/outbox for the
-  auto-generated RUN_ID, then use that in your reply below.
-  If using route-gmail-once manually: first run `python cli.py run-procurement`
-  to create the RFQ draft and send it, then note the RUN_ID printed.
-  Action: Send a plain-text email to yourself with:
-    Subject : Reorder Suggestion - NMC Powder [RUN_ID=<RUN_ID_FROM_RFQ>]""" + """
+--------------------------------------------------------------
+STEP 5  —  Fish Collagen Peptides: risky quote -> REJECT -> fallback
+--------------------------------------------------------------
+  5a. Supplier quote (risky terms)
+      Send a plain-text email to yourself (replying under the FCP RFQ):
+        Subject : (keep or match the RFQ subject with its RUN_ID)
+        Body    :
+          Unit price: USD 160/kg
+          Availability: limited stock
+          Lead time: 35 days
+          Shipping: USD 950
+          Quote valid for: 3 days
+      In Gmail, apply label:  procurement/quote
+      Run: python cli.py route-gmail-once
+      Expected:
+        [ROUTING] label=procurement/quote -> quote parser
+        [RECOMMENDATION] Product: Fish Collagen Peptides  Decision: NEEDS_HUMAN_REVIEW
+        [APPROVAL DRAFT] id=<draft_id> — approval email sent
+
+  5b. Human rejection
+      Find the approval email and reply:
+        REJECT
+        Reason: lead time too long and shipping cost too high.
+      In Gmail, apply label:  procurement/approval
+      Run: python cli.py route-gmail-once
+      Expected:
+        [APPROVAL] rejected -- Fish Collagen Peptides
+        [FALLBACK] RFQ sent to Shanghai BioSupply International
+        No order placed; no inventory change
+
+--------------------------------------------------------------
+STEP 6  —  Shanghai fallback quote -> new recommendation
+--------------------------------------------------------------
+  Shanghai replies with better terms. Send a plain-text email to yourself:
+    Subject : (match the fallback RFQ subject with its RUN_ID)
     Body    :
-      Unit price: $12.50/kg
-      In stock. Lead time: 5 days. Shipping: $20. Valid for 14 days.
-  In Gmail, apply the label:  procurement/quote
-  Run  : python cli.py route-gmail-once
-  Expected output:
+      Unit price: USD 150/kg
+      Availability: in stock
+      Lead time: 14 days
+      Shipping: USD 320
+      Quote valid for: 10 days
+  In Gmail, apply label:  procurement/quote
+  Run: python cli.py route-gmail-once
+  Expected:
     [ROUTING] label=procurement/quote -> quote parser
-    [RECOMMENDATION]
-      Product:  NMC Powder
-      Supplier: Demo Supplier
-      Decision: LOW_RISK_RECOMMEND
-    [APPROVAL DRAFT] id=<DRAFT_ID> for NMC Powder
+    [RECOMMENDATION] Product: Fish Collagen Peptides  Supplier: Shanghai BioSupply International
+    [APPROVAL DRAFT] id=<draft_id> — new approval email sent
 
-STEP 4  -  Approve Order (human approval -> order sent)
-  Action: The system sends an approval email to USER_APPROVAL_EMAIL.
-          Reply to that email with:
-            APPROVE
-          In Gmail, apply the label:  procurement/approval
-  Run  : python cli.py route-gmail-once
-  Expected output:
-    [ROUTING] label=procurement/approval -> approval handler
-    [APPROVAL] approved -- NMC Powder
-    [ORDER SENT] Sent supplier order email ...
+  MEMORY WARNING (demo effect):
+    The approval email reason will include a memory note such as:
+      "Memory signal:
+         - Past rejections: 1
+         - Supplier memory score: -2.0
+         - Memory note: this supplier has previous negative feedback.
+         - Recent rejection reasons: Previous order had long lead time
+           and unreliable delivery estimate."
+    This is a risk signal only — the human can still APPROVE or use CHANGE.
 
-STEP 5  -  Optional Reject Demo
-  Instead of APPROVE in Step 4, reply with:
-    REJECT
-    Reason: price too high
-  In Gmail, apply the label:  procurement/approval
-  Run  : python cli.py route-gmail-once
-  Expected output:
-    [APPROVAL] rejected -- NMC Powder
-    [FALLBACK] No alternative supplier for NMC Powder
-    [FALLBACK] Sent no-alternative notification ...
-
-STEP 6  -  Approve Anyway (after rejection)
-  Reply to the no-alternative notification with:
-    APPROVE ANYWAY
-  In Gmail, apply the label:  procurement/approval
-  Run  : python cli.py route-gmail-once
-  Expected output:
-    [APPROVAL] override approved -- NMC Powder
-    [ORDER SENT] ...
+--------------------------------------------------------------
+STEP 7 (optional) -- CHANGE: redirect to a different supplier
+--------------------------------------------------------------
+  Because the memory note raises concern about Shanghai's reliability,
+  you may choose to redirect to a different supplier instead of approving.
+  Reply to the approval email with:
+    CHANGE
+    Supplier: <new supplier name>
+    Email: <supplier@example.com>
+    Quantity: <quantity (optional)>
+    Reason: <reason (optional)>
+  In Gmail, apply label:  procurement/approval
+  Run: python cli.py route-gmail-once
+  Expected:
+    [APPROVAL] change_requested -- <product>
+    [CHANGE RFQ] Sent procurement email for <product> to <new supplier>
+  The agent registers the new supplier in its catalog and sends them an RFQ.
+  Wait for their quote reply (label: procurement/quote) to get a new recommendation.
+  CHANGE does NOT place an order or update inventory.
 """)
     print(sep)
     print("  Run 'python cli.py inventory-status' at any point to check stock.")
     print(sep)
     print("""
-LIVE DEMO — Fully Automated (agent-watch)
-  Uses: python cli.py agent-watch  (replaces manual route-gmail-once steps)
+FULLY AUTOMATED MODE (agent-watch)
+  Uses: python cli.py agent-watch  (replaces manual route-gmail-once calls)
 
-  Setup (one-time):
-    python cli.py demo-seed          # seeds NMC Powder at 24.0 kg, reorder_at 20.0 kg
-    python cli.py app                # start UI in terminal 1
-    python cli.py agent-watch        # start agent loop in terminal 2 (polls every 10s)
+  Setup:
+    python cli.py demo-seed
+    python scripts/generate_demo_invoices.py
+    python cli.py app          # UI — terminal 1
+    python cli.py agent-watch  # agent loop — terminal 2 (polls every 10 s)
 
-  Story:
-
-  EVENT 1 — Sales invoice triggers low-stock detection
-    Attach:  data/demo_pdfs/sales_invoice_INV_SALES_001.pdf  to an email
-    Send to: yourself, then apply Gmail label:  sales/invoice
-    agent-watch output:
-      [AGENT WATCH] Checking Gmail labels...
-      [ROUTING] label=sales/invoice -> invoice_agent (sales)
-      [AGENT WATCH] Checking low stock...
-      [AGENT WATCH] Low stock detected: NMC Powder
-      [AGENT WATCH] RFQ triggered for NMC Powder
-    Inventory: NMC Powder 24.0 kg -> 19.0 kg (below 20.0 kg threshold)
-
-  EVENT 2 — Supplier replies with a quote
-    Find the RFQ email in your sent mail; note the RUN_ID in the subject.
-    Send a plain-text reply to yourself:
-      Subject : Reorder Suggestion - NMC Powder [RUN_ID=<id from RFQ>]
-      Body    :
-        Unit price: $12.50/kg
-        In stock. Lead time: 5 days. Shipping: $20. Valid for 14 days.
-    Apply Gmail label:  procurement/quote
-    agent-watch output:
-      [AGENT WATCH] Checking Gmail labels...
-      [ROUTING] label=procurement/quote -> quote parser
-      [RECOMMENDATION]
-        Product:  NMC Powder
-        Supplier: Demo Supplier
-        Decision: LOW_RISK_RECOMMEND
-      [APPROVAL DRAFT] id=<draft_id> for NMC Powder
-
-  EVENT 3 — Human approves the order
-    Find the approval email sent to USER_APPROVAL_EMAIL.
-    Reply to it with:
-      APPROVE
-    Apply Gmail label:  procurement/approval
-    agent-watch output:
-      [AGENT WATCH] Checking Gmail labels...
-      [ROUTING] label=procurement/approval -> approval handler
-      [APPROVAL] approved -- NMC Powder
-      [ORDER SENT] Sent supplier order email ...
-
-  Optional — Reject then approve anyway:
-    Reply REJECT (reason: price too high) + label procurement/approval
-    agent-watch output:
-      [APPROVAL] rejected -- NMC Powder
-      [FALLBACK] No alternative supplier for NMC Powder
-      [FALLBACK] Sent no-alternative notification ...
-    Then reply APPROVE ANYWAY + label procurement/approval:
-      [APPROVAL] override approved -- NMC Powder
-      [ORDER SENT] ...
+  Follow Steps 1-6 above; agent-watch handles routing automatically after
+  each email/label action. No need to run route-gmail-once manually.
 
   Check inventory at any point:
     python cli.py inventory-status
+
+--------------------------------------------------------------
+SIMPLE TEST DEMO (legacy — NMC Powder / Graphite Anode)
+--------------------------------------------------------------
+  These demo PDFs exercise the same routing pipeline with simpler data:
+    data/demo_pdfs/sales_invoice_INV_SALES_001.pdf
+      -> NMC Powder 24 kg -> 19 kg (below 20 kg threshold)
+    data/demo_pdfs/purchase_receipt_INV_PUR_001.pdf
+      -> Graphite Anode 50 kg -> 70 kg
+  Use for quick label-routing smoke tests only; not the primary business demo.
 """)
     print(sep + "\n")
 
@@ -1394,6 +1474,25 @@ def cmd_demo_seed(args):
     conn.commit()
     conn.close()
 
+    # --- Demo procurement memory seed ---
+    # One deterministic historical rejection so the Shanghai fallback recommendation
+    # shows a meaningful memory warning instead of "no prior feedback found."
+    # This is seed data only — no runtime supplier logic is conditioned on it.
+    print("[DEMO] Seeding demo procurement memory (prior rejection for FCP fallback supplier)...")
+    from database import record_procurement_memory
+    record_procurement_memory(
+        product_name="Fish Collagen Peptides",
+        supplier="Shanghai BioSupply International",
+        supplier_email="mzhou@shibiosupply.com",
+        lead_time="35 days",
+        availability="delayed / uncertain",
+        recommendation_action="NEEDS_HUMAN_REVIEW",
+        user_action="REJECT",
+        user_reason="Previous order had long lead time and unreliable delivery estimate.",
+        outcome_status="rejected",
+        run_id="demo_seed_shanghai_fcp",
+    )
+
     print("[DEMO] Generating demo PDFs...")
     try:
         import sys, os
@@ -1562,8 +1661,10 @@ def cmd_procurement_action_test(args):
     _fake_efa.send_email = lambda to, subject, body: sent_emails.append(
         {"to": to, "subject": subject, "body": body}
     )
-    _prev_efa = sys.modules.get("email_feedback_agent")
-    sys.modules["email_feedback_agent"] = _fake_efa
+    _prev_efa        = sys.modules.get("email_feedback_agent")
+    _prev_agents_efa = sys.modules.get("agents.email_feedback_agent")
+    sys.modules["email_feedback_agent"]        = _fake_efa
+    sys.modules["agents.email_feedback_agent"] = _fake_efa
 
     _prev_approval = os.environ.get("USER_APPROVAL_EMAIL")
     os.environ["USER_APPROVAL_EMAIL"] = "approval@test.example"
@@ -1699,6 +1800,10 @@ def cmd_procurement_action_test(args):
             sys.modules.pop("email_feedback_agent", None)
         else:
             sys.modules["email_feedback_agent"] = _prev_efa
+        if _prev_agents_efa is None:
+            sys.modules.pop("agents.email_feedback_agent", None)
+        else:
+            sys.modules["agents.email_feedback_agent"] = _prev_agents_efa
         if _prev_approval is None:
             os.environ.pop("USER_APPROVAL_EMAIL", None)
         else:
@@ -1757,8 +1862,10 @@ def cmd_email_loop_test(args):
     _fake_efa.build_recommendation_subject = (
         lambda item, run_id: f"Reorder Suggestion - {item} [RUN_ID={run_id}]"
     )
-    _prev_efa = sys.modules.get("email_feedback_agent")
-    sys.modules["email_feedback_agent"] = _fake_efa
+    _prev_efa        = sys.modules.get("email_feedback_agent")
+    _prev_agents_efa = sys.modules.get("agents.email_feedback_agent")
+    sys.modules["email_feedback_agent"]        = _fake_efa
+    sys.modules["agents.email_feedback_agent"] = _fake_efa
 
     _prev_approval = os.environ.get("USER_APPROVAL_EMAIL")
     os.environ["USER_APPROVAL_EMAIL"] = "approver@test.example"
@@ -2039,6 +2146,10 @@ def cmd_email_loop_test(args):
             sys.modules.pop("email_feedback_agent", None)
         else:
             sys.modules["email_feedback_agent"] = _prev_efa
+        if _prev_agents_efa is None:
+            sys.modules.pop("agents.email_feedback_agent", None)
+        else:
+            sys.modules["agents.email_feedback_agent"] = _prev_agents_efa
         if _prev_approval is None:
             os.environ.pop("USER_APPROVAL_EMAIL", None)
         else:
@@ -2073,7 +2184,10 @@ def cmd_business_demo_test(args):
     1. CUST-DEMO-001 sales invoice causes Collagen Powder and Fish Collagen Peptides low stock
     2. Collagen Powder: good quote -> APPROVE -> order email sent to supplier
     3. SUP-DEMO-COLLAGEN-001 purchase receipt -> only Collagen Powder stock increases
-    4. Fish Collagen Peptides: risky quote -> REJECT -> fallback supplier approval email sent
+    4. Fish Collagen Peptides: risky quote -> REJECT -> fallback RFQ to Shanghai
+    4c. Shanghai quote -> recommendation + approval email (not order)
+    5. CHANGE reply with Marine BioActives -> product_supplier_alternates updated -> RFQ sent
+    5c. Marine BioActives quote -> new recommendation (not order)
     """
     import sys
     import types
@@ -2086,7 +2200,9 @@ def cmd_business_demo_test(args):
         create_order_approval_draft,
         send_order_approval_draft,
         send_supplier_order_email,
+        create_and_send_change_rfq,
     )
+    from agents.email_feedback_agent import parse_reply as _parse_reply_real
 
     print("[BUSINESS DEMO TEST] Setting up...")
     init_db()
@@ -2105,8 +2221,10 @@ def cmd_business_demo_test(args):
     _fake_efa.build_recommendation_subject = (
         lambda item, run_id: f"Reorder Suggestion - {item} [RUN_ID={run_id}]"
     )
-    _prev_efa = sys.modules.get("email_feedback_agent")
-    sys.modules["email_feedback_agent"] = _fake_efa
+    _prev_efa        = sys.modules.get("email_feedback_agent")
+    _prev_agents_efa = sys.modules.get("agents.email_feedback_agent")
+    sys.modules["email_feedback_agent"]        = _fake_efa
+    sys.modules["agents.email_feedback_agent"] = _fake_efa
 
     _prev_approval = os.environ.get("USER_APPROVAL_EMAIL")
     os.environ["USER_APPROVAL_EMAIL"] = "approver@test.example"
@@ -2328,11 +2446,122 @@ def cmd_business_demo_test(args):
         print(f"  {'PASS' if ok4g else 'FAIL'}  approval email sent ({len(sent_emails)} email(s))")
         print(f"  {'PASS' if ok4h else 'FAIL'}  no purchase order sent")
 
+        # ── Stage 5: CHANGE reply -> Marine BioActives RFQ ────────────────────────
+        print("\n[BUSINESS DEMO TEST] Stage 5: CHANGE reply -> new supplier RFQ")
+        sent_emails.clear()
+
+        SUPPLIER_FCP_CHANGE       = "Marine BioActives Ltd"
+        SUPPLIER_FCP_CHANGE_EMAIL = "quotes@marinebioactives.com"
+
+        # 5a: parse_reply must extract Email field from a CHANGE reply
+        change_body = (
+            "CHANGE\n"
+            f"Supplier: {SUPPLIER_FCP_CHANGE}\n"
+            f"Email: {SUPPLIER_FCP_CHANGE_EMAIL}\n"
+            "Quantity: 130 kg\n"
+            "Reason: Shanghai quote is still above target."
+        )
+        parsed_change = _parse_reply_real(change_body)
+        ok5_parse   = (
+            parsed_change["action"]              == "CHANGE"
+            and parsed_change.get("supplier")    == SUPPLIER_FCP_CHANGE
+            and parsed_change.get("email")       == SUPPLIER_FCP_CHANGE_EMAIL
+            and parsed_change.get("quantity")    == 130.0
+        )
+        results.append(("Stage 5: parse_reply extracts Supplier + Email + Quantity from CHANGE reply", ok5_parse))
+        print(f"  {'PASS' if ok5_parse else 'FAIL'}  parse_reply: action={parsed_change['action']}"
+              f" supplier={parsed_change.get('supplier')} email={parsed_change.get('email')}"
+              f" qty={parsed_change.get('quantity')}")
+
+        # 5b: create_and_send_change_rfq -> catalog updated, RFQ sent, no order, no inv change
+        conn = get_connection()
+        fcp_inv_before5 = float(
+            _execute(conn, "SELECT quantity_kg FROM stock WHERE product_name = ?",
+                     (PRODUCT_FCP,)).fetchone()["quantity_kg"]
+        )
+        conn.close()
+        _change_result = create_and_send_change_rfq(
+            PRODUCT_FCP, SUPPLIER_FCP_CHANGE, SUPPLIER_FCP_CHANGE_EMAIL,
+            reason="Shanghai quote is still above target.",
+        )
+
+        conn = get_connection()
+        alt_cat_row = _execute(conn,
+            "SELECT supplier_email FROM product_supplier_alternates "
+            "WHERE product_name = ? AND supplier = ?",
+            (PRODUCT_FCP, SUPPLIER_FCP_CHANGE),
+        ).fetchone()
+        change_rfq_draft = _execute(conn,
+            "SELECT id, recommendation_id, supplier, supplier_email, status "
+            "FROM procurement_email_drafts "
+            "WHERE product_name = ? AND supplier = ? AND status = 'rfq_sent' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (PRODUCT_FCP, SUPPLIER_FCP_CHANGE),
+        ).fetchone()
+        fcp_inv_after5 = float(
+            _execute(conn, "SELECT quantity_kg FROM stock WHERE product_name = ?",
+                     (PRODUCT_FCP,)).fetchone()["quantity_kg"]
+        )
+        conn.close()
+
+        ok5b_catalog  = alt_cat_row is not None and alt_cat_row["supplier_email"] == SUPPLIER_FCP_CHANGE_EMAIL
+        ok5b_draft    = change_rfq_draft is not None
+        ok5b_rfq_sent = len(sent_emails) >= 1
+        ok5b_no_order = not any("Purchase Order" in e.get("subject", "") for e in sent_emails)
+        ok5b_no_appr  = not any("Order Approval Required" in e.get("subject", "") for e in sent_emails)
+        ok5b_no_inv   = abs(fcp_inv_after5 - fcp_inv_before5) < 0.001
+
+        results.append(("Stage 5b: CHANGE -> product_supplier_alternates updated", ok5b_catalog))
+        results.append(("Stage 5b: CHANGE -> RFQ sent to user-provided supplier", ok5b_draft and ok5b_rfq_sent))
+        results.append(("Stage 5b: CHANGE -> no order or premature approval email", ok5b_no_order and ok5b_no_appr))
+        results.append(("Stage 5b: CHANGE -> no inventory change", ok5b_no_inv))
+        print(f"  {'PASS' if ok5b_catalog else 'FAIL'}  catalog updated: Marine BioActives email="
+              f"{alt_cat_row['supplier_email'] if alt_cat_row else 'NOT FOUND'}")
+        print(f"  {'PASS' if ok5b_draft else 'FAIL'}  RFQ draft exists (status=rfq_sent): "
+              f"id={dict(change_rfq_draft)['id'] if change_rfq_draft else 'None'}")
+        print(f"  {'PASS' if ok5b_rfq_sent else 'FAIL'}  RFQ email sent ({len(sent_emails)} email(s))")
+        print(f"  {'PASS' if ok5b_no_order else 'FAIL'}  no purchase order email")
+        print(f"  {'PASS' if ok5b_no_appr else 'FAIL'}  no premature approval email")
+        print(f"  {'PASS' if ok5b_no_inv else 'FAIL'}  Fish Collagen Peptides inventory unchanged ({fcp_inv_after5} kg)")
+
+        # ── Stage 5c: Marine BioActives quote -> new recommendation (not order) ────
+        print("\n[BUSINESS DEMO TEST] Stage 5c: Marine BioActives quote -> new recommendation")
+        sent_emails.clear()
+        change_rec_id = int(dict(change_rfq_draft)["recommendation_id"]) if change_rfq_draft else None
+        if change_rec_id:
+            conn = get_connection()
+            _execute(conn,
+                "UPDATE procurement_recommendations SET status = 'quote_received' WHERE id = ?",
+                (change_rec_id,),
+            )
+            conn.commit()
+            marine_quote_body = (
+                "Unit price: USD 145/kg\n"
+                "In stock. Lead time: 12 days. Shipping: USD 280. Valid for 14 days."
+            )
+            marine_quote_fields = extract_quote_fields(marine_quote_body)
+            marine_result = run_recommendation_from_quote(conn, change_rec_id, marine_quote_fields)
+            conn.close()
+            ok5c_decision  = marine_result["decision"]["action"] in ("LOW_RISK_RECOMMEND", "NEEDS_HUMAN_REVIEW")
+            ok5c_draft     = marine_result["approval_draft_id"] is not None
+            ok5c_no_order  = not any("Purchase Order" in e.get("subject", "") for e in sent_emails)
+        else:
+            ok5c_decision = ok5c_draft = ok5c_no_order = False
+        results.append(("Stage 5c: Marine BioActives quote -> recommendation + approval (not order)",
+                         ok5c_decision and ok5c_draft and ok5c_no_order))
+        print(f"  {'PASS' if ok5c_decision else 'FAIL'}  decision={marine_result['decision']['action'] if change_rec_id else '?'}")
+        print(f"  {'PASS' if ok5c_draft else 'FAIL'}  approval_draft_id={marine_result['approval_draft_id'] if change_rec_id else '?'}")
+        print(f"  {'PASS' if ok5c_no_order else 'FAIL'}  no purchase order sent")
+
     finally:
         if _prev_efa is None:
             sys.modules.pop("email_feedback_agent", None)
         else:
             sys.modules["email_feedback_agent"] = _prev_efa
+        if _prev_agents_efa is None:
+            sys.modules.pop("agents.email_feedback_agent", None)
+        else:
+            sys.modules["agents.email_feedback_agent"] = _prev_agents_efa
         if _prev_approval is None:
             os.environ.pop("USER_APPROVAL_EMAIL", None)
         else:
@@ -2414,9 +2643,31 @@ def cmd_memory_status(args):
 
 
 def cmd_memory_test(args):
-    """Seed fake feedback records and verify supplier scoring with PASS/FAIL output."""
+    """
+    Seed structured memory records and verify scoring, memory note, and audit trail.
+
+    Scoring weights under test:
+        APPROVE           +1
+        REJECT            -2
+        STOP_PURCHASE     -3
+        CHANGE            -1
+        APPROVE_ANYWAY     0
+        PROVIDE_NEW_QUOTE  0
+
+    Test suppliers (generic — no demo product/supplier hardcodes in runtime):
+        BatteryMaterials Co  : APPROVE(+1) + REJECT(-2)  = -1.0
+        CarbonSupply Inc     : APPROVE(+1)               =  1.0
+        HaltedVendor Ltd     : STOP_PURCHASE(-3)         = -3.0
+        RedirectedSupplier   : CHANGE(-1)                = -1.0
+        OverriddenVendor     : APPROVE_ANYWAY(0)         =  0.0
+        NewQuoteVendor       : PROVIDE_NEW_QUOTE(0)      =  0.0
+    """
     from database import get_connection, _execute, record_procurement_memory, init_db
-    from agents.procurement_agent import get_supplier_memory_score
+    from agents.procurement_agent import (
+        get_supplier_memory_score,
+        build_recommendation_reason,
+        extract_quote_fields,
+    )
 
     print("[MEMORY TEST] Initialising DB...")
     init_db()
@@ -2432,9 +2683,10 @@ def cmd_memory_test(args):
         product_name="NMC Powder",
         lead_time="5 days",
         shipping_cost=20.0,
+        availability="in stock",
     )
 
-    # BatteryMaterials Co: APPROVE (+1) then REJECT (-1) => score 0
+    # BatteryMaterials Co: APPROVE (+1) then REJECT (-2) => score -1.0
     record_procurement_memory(
         **_common,
         supplier="BatteryMaterials Co",
@@ -2460,7 +2712,7 @@ def cmd_memory_test(args):
         run_id="memtest002",
     )
 
-    # CarbonSupply Inc: APPROVE (+1) => score 1
+    # CarbonSupply Inc: APPROVE (+1) => score 1.0
     record_procurement_memory(
         **_common,
         supplier="CarbonSupply Inc",
@@ -2474,27 +2726,123 @@ def cmd_memory_test(args):
         run_id="memtest003",
     )
 
+    # HaltedVendor Ltd: STOP_PURCHASE (-3) => score -3.0
+    record_procurement_memory(
+        **_common,
+        supplier="HaltedVendor Ltd",
+        supplier_email="ops@haltedvendor.com",
+        unit_price=25.00,
+        estimated_total_cost=820.0,
+        recommendation_action="NEEDS_HUMAN_REVIEW",
+        user_action="STOP_PURCHASE",
+        user_reason="sourcing cancelled",
+        outcome_status="stopped",
+        run_id="memtest004",
+    )
+
+    # RedirectedSupplier: CHANGE (-1) => score -1.0
+    record_procurement_memory(
+        **_common,
+        supplier="RedirectedSupplier",
+        supplier_email="sales@redirected.com",
+        unit_price=14.00,
+        estimated_total_cost=460.0,
+        recommendation_action="NEEDS_HUMAN_REVIEW",
+        user_action="CHANGE",
+        user_reason="switching to alternative",
+        outcome_status="change_rfq_sent",
+        run_id="memtest005",
+    )
+
+    # OverriddenVendor: APPROVE_ANYWAY (0) => score 0.0
+    record_procurement_memory(
+        **_common,
+        supplier="OverriddenVendor",
+        supplier_email="sales@overridden.com",
+        unit_price=30.00,
+        estimated_total_cost=980.0,
+        recommendation_action="NEEDS_HUMAN_REVIEW",
+        user_action="APPROVE_ANYWAY",
+        user_reason=None,
+        outcome_status="order_sent",
+        run_id="memtest006",
+    )
+
+    # NewQuoteVendor: PROVIDE_NEW_QUOTE (0) => score 0.0
+    record_procurement_memory(
+        **_common,
+        supplier="NewQuoteVendor",
+        supplier_email="sales@newquote.com",
+        unit_price=13.00,
+        estimated_total_cost=440.0,
+        recommendation_action="NEEDS_HUMAN_REVIEW",
+        user_action="PROVIDE_NEW_QUOTE",
+        user_reason=None,
+        outcome_status="pending_new_quote",
+        run_id="memtest007",
+    )
+
     print("[MEMORY TEST] Records seeded.\n")
     cmd_memory_status(args)
 
     conn = get_connection()
     try:
-        battery = get_supplier_memory_score(conn, "NMC Powder", "BatteryMaterials Co")
-        carbon  = get_supplier_memory_score(conn, "NMC Powder", "CarbonSupply Inc")
+        battery    = get_supplier_memory_score(conn, "NMC Powder", "BatteryMaterials Co")
+        carbon     = get_supplier_memory_score(conn, "NMC Powder", "CarbonSupply Inc")
+        halted     = get_supplier_memory_score(conn, "NMC Powder", "HaltedVendor Ltd")
+        redirected = get_supplier_memory_score(conn, "NMC Powder", "RedirectedSupplier")
+        overridden = get_supplier_memory_score(conn, "NMC Powder", "OverriddenVendor")
+        newquote   = get_supplier_memory_score(conn, "NMC Powder", "NewQuoteVendor")
+        unknown    = get_supplier_memory_score(conn, "NMC Powder", "UnknownVendor")
+
+        # Verify memory note in recommendation reason (uses generic supplier/product)
+        sample_quote = extract_quote_fields(
+            "Unit price: $12.50/kg\nIn stock. Lead time: 5 days. Shipping: $20. Valid for 14 days."
+        )
+        reason_positive = build_recommendation_reason("NMC Powder", "CarbonSupply Inc", 30.0, sample_quote, conn)
+        reason_negative = build_recommendation_reason("NMC Powder", "BatteryMaterials Co", 30.0, sample_quote, conn)
+        reason_none     = build_recommendation_reason("NMC Powder", "UnknownVendor", 30.0, sample_quote, conn)
     finally:
         conn.close()
 
-    tests = [
-        ("BatteryMaterials Co score", battery["supplier_score"], 0.0),
-        ("CarbonSupply Inc score",    carbon["supplier_score"],  1.0),
+    score_tests = [
+        ("BatteryMaterials Co  APPROVE+REJECT score",  battery["supplier_score"],    -1.0),
+        ("CarbonSupply Inc     APPROVE score",         carbon["supplier_score"],      1.0),
+        ("HaltedVendor Ltd     STOP_PURCHASE score",   halted["supplier_score"],     -3.0),
+        ("RedirectedSupplier   CHANGE score",          redirected["supplier_score"], -1.0),
+        ("OverriddenVendor     APPROVE_ANYWAY score",  overridden["supplier_score"],  0.0),
+        ("NewQuoteVendor       PROVIDE_NEW_QUOTE score",newquote["supplier_score"],   0.0),
     ]
+    note_tests = [
+        ("positive memory note in reason (CarbonSupply Inc)",
+         "Memory note: this supplier has previous approvals." in reason_positive),
+        ("negative memory note in reason (BatteryMaterials Co)",
+         "Memory note: this supplier has previous negative feedback." in reason_negative),
+        ("no-history memory note in reason (UnknownVendor)",
+         "Memory note: no prior supplier feedback found." in reason_none),
+        ("memory signal section present in reason",
+         "Memory signal:" in reason_positive),
+        ("audit: change_count tracked for RedirectedSupplier",
+         redirected["change_count"] == 1),
+        ("audit: stop_count tracked for HaltedVendor",
+         halted["stop_count"] == 1),
+        ("audit: unknown vendor returns zero score",
+         unknown["supplier_score"] == 0.0 and (
+             unknown["approval_count"] + unknown["reject_count"] == 0
+         )),
+    ]
+
     all_pass = True
     print("[MEMORY TEST] Score verification:")
-    for label, actual, expected in tests:
+    for label, actual, expected in score_tests:
         ok = abs(actual - expected) < 0.001
         all_pass = all_pass and ok
-        status = "PASS" if ok else "FAIL"
-        print(f"  {label} = {actual:.1f}  (expected {expected:.1f})  -> {status}")
+        print(f"  {'PASS' if ok else 'FAIL'}  {label} = {actual:.1f}  (expected {expected:.1f})")
+
+    print("\n[MEMORY TEST] Memory note verification:")
+    for label, ok in note_tests:
+        all_pass = all_pass and ok
+        print(f"  {'PASS' if ok else 'FAIL'}  {label}")
 
     print(f"\n[MEMORY TEST] {'ALL PASS' if all_pass else 'SOME TESTS FAILED'}")
 
@@ -2503,6 +2851,264 @@ def _make_mock_email_msg():
     """Return a minimal email.message object for simulation (no PDF)."""
     import email as _email
     return _email.message_from_string("Subject: Mock\r\n\r\nMock body")
+
+
+def cmd_dedup_test(args):
+    """
+    Verify that run_pipeline_from_gmail_invoices is idempotent:
+    processing the same invoice twice must not change inventory a second time.
+    No Gmail, no Claude.
+    """
+    from database import get_connection, _execute, init_db, is_message_processed, mark_message_processed
+    from scripts.run_pipeline import run_pipeline_from_gmail_invoices, _invoice_signature, _count_valid_line_items
+
+    print("[DEDUP TEST] Initialising...")
+    init_db()
+
+    PRODUCT      = "DedupTestWidget"
+    INVOICE_NUM  = "DEDUP-TEST-INV-001"
+    INVOICE_A    = "DEDUP-TEST-INV-A"
+    INVOICE_B    = "DEDUP-TEST-INV-B"
+    INITIAL_QTY  = 100.0
+    SALES_QTY    = 30.0
+    SALES_QTY_A  = 15.0
+    SALES_QTY_B  = 10.0
+
+    conn = get_connection()
+    all_pass = True
+
+    # Build test invoice dicts up-front so we can compute their signatures
+    # for use in finally-block cleanup.
+    fake_invoice = {
+        "invoice_number": INVOICE_NUM,
+        "document_type": "sales",
+        "vendor_name": "Test Customer",
+        "date": "2026-05-06",
+        "total_amount": SALES_QTY * 10.0,
+        "line_items": [
+            {"description": PRODUCT, "quantity": SALES_QTY, "unit_price": 10.0, "total": SALES_QTY * 10.0}
+        ],
+    }
+    # Test 7: same content as fake_invoice but invoice_number=None
+    fake_invoice_unnamed = {
+        "invoice_number": None,
+        "document_type": "sales",
+        "vendor_name": "Test Customer",
+        "date": "2026-05-06",
+        "total_amount": SALES_QTY * 10.0,
+        "line_items": [
+            {"description": PRODUCT, "quantity": SALES_QTY, "unit_price": 10.0, "total": SALES_QTY * 10.0}
+        ],
+    }
+    # Test 8: two genuinely different invoices (different quantities → different sigs)
+    fake_invoice_a = {
+        "invoice_number": INVOICE_A,
+        "document_type": "sales",
+        "vendor_name": "Test Customer",
+        "date": "2026-05-06",
+        "total_amount": SALES_QTY_A * 10.0,
+        "line_items": [
+            {"description": PRODUCT, "quantity": SALES_QTY_A, "unit_price": 10.0, "total": SALES_QTY_A * 10.0}
+        ],
+    }
+    fake_invoice_b = {
+        "invoice_number": INVOICE_B,
+        "document_type": "sales",
+        "vendor_name": "Test Customer",
+        "date": "2026-05-06",
+        "total_amount": SALES_QTY_B * 10.0,
+        "line_items": [
+            {"description": PRODUCT, "quantity": SALES_QTY_B, "unit_price": 10.0, "total": SALES_QTY_B * 10.0}
+        ],
+    }
+    # Test 9: same invoice_number, but the first extracted dict has empty line_items
+    # and the second (a different PDF chunk) has valid line_items.
+    # Simulates the post-_fill_missing_invoice_numbers state where both chunks got
+    # INVOICE_NUM from the email subject; dedup must upgrade to the complete candidate.
+    fake_invoice_named_empty = {
+        "invoice_number": INVOICE_NUM,
+        "document_type": "sales",
+        "vendor_name": "Test Customer",
+        "date": "2026-05-06",
+        "total_amount": SALES_QTY * 10.0,
+        "line_items": [],   # extracted from a header-only chunk, no item rows
+    }
+    fake_invoice_named_valid = {
+        "invoice_number": INVOICE_NUM,
+        "document_type": "sales",
+        "vendor_name": "Test Customer",
+        "date": "2026-05-06",
+        "total_amount": SALES_QTY * 10.0,
+        "line_items": [
+            {"description": PRODUCT, "quantity": SALES_QTY, "unit_price": 10.0, "total": SALES_QTY * 10.0}
+        ],
+    }
+
+    sig_main         = _invoice_signature(fake_invoice)
+    sig_unnamed      = _invoice_signature(fake_invoice_unnamed)
+    sig_a            = _invoice_signature(fake_invoice_a)
+    sig_b            = _invoice_signature(fake_invoice_b)
+    sig_named_empty  = _invoice_signature(fake_invoice_named_empty)
+    # fake_invoice_named_valid shares sig with fake_invoice (same content)
+
+    try:
+        # Seed a disposable test product
+        _execute(conn, "DELETE FROM stock WHERE product_name = ?", (PRODUCT,))
+        _execute(conn, "DELETE FROM processed_messages WHERE message_id IN (?,?,?,?,?,?)",
+                 (INVOICE_NUM, INVOICE_A, INVOICE_B, sig_main, sig_a, sig_b))
+        _execute(conn, """
+            INSERT INTO stock (product_name, supplier, quantity_kg, reorder_at, unit)
+            VALUES (?, 'Test Supplier', ?, 0, 'kg')
+        """, (PRODUCT, INITIAL_QTY))
+        conn.commit()
+
+        expected_after_first = INITIAL_QTY - SALES_QTY
+
+        # --- Test 1: first pass applies the invoice ---
+        run_pipeline_from_gmail_invoices([fake_invoice])
+
+        row = _execute(conn, "SELECT quantity_kg FROM stock WHERE product_name = ?", (PRODUCT,)).fetchone()
+        qty_after_first = float(row["quantity_kg"]) if row else None
+
+        ok1 = qty_after_first is not None and abs(qty_after_first - expected_after_first) < 0.01
+        all_pass = all_pass and ok1
+        print(
+            f"  {'PASS' if ok1 else 'FAIL'}  "
+            f"First pass: {INITIAL_QTY} -> {qty_after_first} (expected {expected_after_first})"
+        )
+
+        # --- Test 2: within-batch duplicate (same invoice_number twice in one call) ---
+        # Simulates _split_invoice_chunks splitting a PDF into multiple chunks
+        # where Claude returns the same invoice_number for each chunk.
+        _execute(conn, "DELETE FROM processed_messages WHERE message_id IN (?,?)", (INVOICE_NUM, sig_main))
+        _execute(conn, "UPDATE stock SET quantity_kg = ? WHERE product_name = ?", (INITIAL_QTY, PRODUCT))
+        conn.commit()
+
+        run_pipeline_from_gmail_invoices([fake_invoice, fake_invoice])  # same invoice twice in one batch
+
+        row = _execute(conn, "SELECT quantity_kg FROM stock WHERE product_name = ?", (PRODUCT,)).fetchone()
+        qty_after_within_batch = float(row["quantity_kg"]) if row else None
+
+        ok2 = qty_after_within_batch is not None and abs(qty_after_within_batch - expected_after_first) < 0.01
+        all_pass = all_pass and ok2
+        print(
+            f"  {'PASS' if ok2 else 'FAIL'}  "
+            f"Within-batch duplicate: {INITIAL_QTY} -> {qty_after_within_batch} "
+            f"(expected {expected_after_first}, not {INITIAL_QTY - 2 * SALES_QTY})"
+        )
+
+        # --- Test 3: cross-batch duplicate (already applied, second call should skip) ---
+        run_pipeline_from_gmail_invoices([fake_invoice])
+
+        row = _execute(conn, "SELECT quantity_kg FROM stock WHERE product_name = ?", (PRODUCT,)).fetchone()
+        qty_after_second_batch = float(row["quantity_kg"]) if row else None
+
+        ok3 = qty_after_second_batch is not None and abs(qty_after_second_batch - qty_after_within_batch) < 0.01
+        all_pass = all_pass and ok3
+        print(
+            f"  {'PASS' if ok3 else 'FAIL'}  "
+            f"Cross-batch duplicate: inventory unchanged at {qty_after_second_batch} "
+            f"(expected {qty_after_within_batch})"
+        )
+
+        # --- Test 4: inv_applied mark present ---
+        ok4 = is_message_processed(INVOICE_NUM, label="inv_applied")
+        all_pass = all_pass and ok4
+        print(f"  {'PASS' if ok4 else 'FAIL'}  invoice_number marked as applied in processed_messages")
+
+        # --- Test 5 & 6: DB dedup label isolation ---
+        mark_message_processed("dedup-test-rfc-id", label="sales/invoice")
+        ok5 = is_message_processed("dedup-test-rfc-id", label="sales/invoice")
+        ok6 = not is_message_processed("dedup-test-rfc-id", label="purchase/receipt")
+        all_pass = all_pass and ok5 and ok6
+        _execute(conn, "DELETE FROM processed_messages WHERE message_id = ?", ("dedup-test-rfc-id",))
+        conn.commit()
+        print(f"  {'PASS' if ok5 else 'FAIL'}  is_message_processed returns True for marked id+label")
+        print(f"  {'PASS' if ok6 else 'FAIL'}  is_message_processed returns False for different label")
+
+        # --- Test 7: named + unnamed same-content → applied only once ---
+        # Simulates one PDF chunk returning invoice_number="CUST-DEMO-001" and
+        # another chunk returning invoice_number=None but identical line items.
+        _execute(conn, "DELETE FROM processed_messages WHERE message_id IN (?,?,?)",
+                 (INVOICE_NUM, sig_main, sig_unnamed))
+        _execute(conn, "UPDATE stock SET quantity_kg = ? WHERE product_name = ?", (INITIAL_QTY, PRODUCT))
+        conn.commit()
+
+        run_pipeline_from_gmail_invoices([fake_invoice, fake_invoice_unnamed])
+
+        row = _execute(conn, "SELECT quantity_kg FROM stock WHERE product_name = ?", (PRODUCT,)).fetchone()
+        qty_after_7 = float(row["quantity_kg"]) if row else None
+        expected_7 = INITIAL_QTY - SALES_QTY
+
+        ok7 = qty_after_7 is not None and abs(qty_after_7 - expected_7) < 0.01
+        all_pass = all_pass and ok7
+        print(
+            f"  {'PASS' if ok7 else 'FAIL'}  "
+            f"Named+unnamed same content: {INITIAL_QTY} -> {qty_after_7} "
+            f"(expected {expected_7}, not {INITIAL_QTY - 2 * SALES_QTY}) — sig dedup"
+        )
+
+        # --- Test 8: two genuinely different invoices both apply ---
+        _execute(conn, "DELETE FROM processed_messages WHERE message_id IN (?,?,?,?)",
+                 (INVOICE_A, INVOICE_B, sig_a, sig_b))
+        _execute(conn, "UPDATE stock SET quantity_kg = ? WHERE product_name = ?", (INITIAL_QTY, PRODUCT))
+        conn.commit()
+
+        run_pipeline_from_gmail_invoices([fake_invoice_a, fake_invoice_b])
+
+        row = _execute(conn, "SELECT quantity_kg FROM stock WHERE product_name = ?", (PRODUCT,)).fetchone()
+        qty_after_8 = float(row["quantity_kg"]) if row else None
+        expected_8 = INITIAL_QTY - SALES_QTY_A - SALES_QTY_B
+
+        ok8 = qty_after_8 is not None and abs(qty_after_8 - expected_8) < 0.01
+        all_pass = all_pass and ok8
+        print(
+            f"  {'PASS' if ok8 else 'FAIL'}  "
+            f"Two different invoices both apply: {INITIAL_QTY} -> {qty_after_8} "
+            f"(expected {expected_8})"
+        )
+
+        # --- Test 9: named-empty + named-valid (same invoice_number) → best candidate wins ---
+        # Simulates one PDF producing multiple chunks where the first chunk has
+        # invoice_number but no line_items, and a later chunk has both.
+        # After _fill_missing_invoice_numbers, both share the same invoice_number.
+        # _dedup_invoice_batch must upgrade to the candidate with valid line_items.
+        _execute(conn, "DELETE FROM processed_messages WHERE message_id IN (?,?,?)",
+                 (INVOICE_NUM, sig_main, sig_named_empty))
+        _execute(conn, "UPDATE stock SET quantity_kg = ? WHERE product_name = ?", (INITIAL_QTY, PRODUCT))
+        conn.commit()
+
+        run_pipeline_from_gmail_invoices([fake_invoice_named_empty, fake_invoice_named_valid])
+
+        row = _execute(conn, "SELECT quantity_kg FROM stock WHERE product_name = ?", (PRODUCT,)).fetchone()
+        qty_after_9 = float(row["quantity_kg"]) if row else None
+        expected_9 = INITIAL_QTY - SALES_QTY
+
+        ok9a = qty_after_9 is not None and abs(qty_after_9 - expected_9) < 0.01
+        ok9b = _count_valid_line_items(fake_invoice_named_valid) > 0  # sanity: valid candidate had items
+        ok9 = ok9a and ok9b
+        all_pass = all_pass and ok9
+        print(
+            f"  {'PASS' if ok9 else 'FAIL'}  "
+            f"Named-empty vs named-valid (same invoice_number): {INITIAL_QTY} -> {qty_after_9} "
+            f"(expected {expected_9}) — completeness upgrade"
+        )
+
+        print(f"\n[DEDUP TEST] {'ALL PASS' if all_pass else 'SOME TESTS FAILED'}")
+
+    finally:
+        # Cleanup: remove test rows without affecting real data
+        _execute(conn, "DELETE FROM stock WHERE product_name = ?", (PRODUCT,))
+        _execute(conn, "DELETE FROM processed_messages WHERE message_id IN (?,?,?,?,?,?,?,?,?)",
+                 (INVOICE_NUM, INVOICE_A, INVOICE_B,
+                  sig_main, sig_unnamed, sig_a, sig_b,
+                  sig_named_empty, "dedup-test-rfc-id"))
+        _execute(conn, "DELETE FROM procurement_recommendations WHERE product_name = ?", (PRODUCT,))
+        _execute(conn, "DELETE FROM procurement_email_drafts WHERE product_name = ?", (PRODUCT,))
+        _execute(conn, "DELETE FROM procurement_memory WHERE product_name = ?", (PRODUCT,))
+        conn.commit()
+        conn.close()
+        print("[DEDUP TEST] Cleaned up.")
 
 
 def cmd_route_test(args):
@@ -2682,6 +3288,12 @@ def build_parser():
         help="End-to-end business demo story: CUST-DEMO-001 -> Collagen Powder approve + FCP reject paths",
     )
 
+    # dedup-test
+    sub.add_parser(
+        "dedup-test",
+        help="Verify duplicate-invoice prevention: same invoice applied twice must not change inventory twice",
+    )
+
     return parser
 
 
@@ -2712,6 +3324,7 @@ def main():
         "procurement-action-test": cmd_procurement_action_test,
         "email-loop-test":         cmd_email_loop_test,
         "business-demo-test":      cmd_business_demo_test,
+        "dedup-test":              cmd_dedup_test,
     }
 
     if args.command in dispatch:

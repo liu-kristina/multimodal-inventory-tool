@@ -13,8 +13,11 @@ import os
 import sqlite3
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv()
+
 DATABASE_URL = os.environ.get("DATABASE_URL")
-DB_PATH      = os.environ.get("DB_PATH", "/app/data/inventory.db")
+DB_PATH      = os.environ.get("DB_PATH", str(Path(__file__).parent / "inventory.db"))
 
 _use_postgres = bool(DATABASE_URL)
 
@@ -204,12 +207,24 @@ def init_db():
                 lead_time              TEXT,
                 shipping_cost          REAL,
                 estimated_total_cost   REAL,
+                availability           TEXT,
+                recommendation_id      INTEGER,
                 recommendation_action  TEXT,
                 user_action            TEXT,
                 user_reason            TEXT,
                 outcome_status         TEXT,
                 run_id                 TEXT,
                 created_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS product_supplier_alternates (
+                id             SERIAL PRIMARY KEY,
+                product_name   TEXT NOT NULL,
+                supplier       TEXT NOT NULL,
+                supplier_email TEXT,
+                priority       INTEGER DEFAULT 1,
+                UNIQUE(product_name, supplier)
             )
         """)
     else:
@@ -333,12 +348,24 @@ def init_db():
                 lead_time              TEXT,
                 shipping_cost          REAL,
                 estimated_total_cost   REAL,
+                availability           TEXT,
+                recommendation_id      INTEGER,
                 recommendation_action  TEXT,
                 user_action            TEXT,
                 user_reason            TEXT,
                 outcome_status         TEXT,
                 run_id                 TEXT,
                 created_at             TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS product_supplier_alternates (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_name   TEXT NOT NULL,
+                supplier       TEXT NOT NULL,
+                supplier_email TEXT,
+                priority       INTEGER DEFAULT 1,
+                UNIQUE(product_name, supplier)
             )
         """)
 
@@ -353,6 +380,16 @@ def init_db():
     ]:
         try:
             _execute(conn, f"ALTER TABLE invoices ADD COLUMN {column[0]} {column[1]}")
+        except Exception:
+            pass
+
+    # Lightweight migration for procurement_memory columns added after initial schema.
+    for col_def in [
+        ("availability",      "TEXT"),
+        ("recommendation_id", "INTEGER"),
+    ]:
+        try:
+            _execute(conn, f"ALTER TABLE procurement_memory ADD COLUMN {col_def[0]} {col_def[1]}")
         except Exception:
             pass
 
@@ -630,6 +667,8 @@ def record_procurement_memory(
     lead_time: str | None = None,
     shipping_cost: float | None = None,
     estimated_total_cost: float | None = None,
+    availability: str | None = None,
+    recommendation_id: int | None = None,
     recommendation_action: str | None = None,
     user_action: str | None = None,
     user_reason: str | None = None,
@@ -644,14 +683,14 @@ def record_procurement_memory(
             """
             INSERT INTO procurement_memory
                 (product_name, supplier, supplier_email, unit_price, lead_time,
-                 shipping_cost, estimated_total_cost, recommendation_action,
-                 user_action, user_reason, outcome_status, run_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 shipping_cost, estimated_total_cost, availability, recommendation_id,
+                 recommendation_action, user_action, user_reason, outcome_status, run_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 product_name, supplier, supplier_email, unit_price, lead_time,
-                shipping_cost, estimated_total_cost, recommendation_action,
-                user_action, user_reason, outcome_status, run_id,
+                shipping_cost, estimated_total_cost, availability, recommendation_id,
+                recommendation_action, user_action, user_reason, outcome_status, run_id,
             ),
         )
         conn.commit()
