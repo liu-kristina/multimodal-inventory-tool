@@ -51,7 +51,7 @@ business_context_card = dbc.Card(
             style={'fontSize': '14px'}
         ),
         html.Hr(className="my-3"),
-        html.H6("Example customer: California Nutraceuticals *", className="fw-bold mb-2"),
+        html.H6("California Nutraceuticals", className="fw-bold mb-2"),
         html.P(
             "A family-owned nutraceutical ingredients distributor with 5–20 employees, acting as the "
             "exclusive North American importer for one or more overseas manufacturers (e.g., a collagen "

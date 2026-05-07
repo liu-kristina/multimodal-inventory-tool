@@ -215,6 +215,75 @@ layout = html.Div([
             ]),
         ]),
 
+        # ── TEAM ──────────────────────────────────────────────────────────────
+        html.Section(className="h-about", style={"paddingTop": "80px", "paddingBottom": "80px"}, children=[
+            html.Div(style={"maxWidth": "1140px", "margin": "0 auto"}, children=[
+                html.P("The team", className="h-section-label", style={"textAlign": "center"}),
+                html.H2("Built by", className="h-section-title",
+                        style={"textAlign": "center", "maxWidth": "100%", "marginBottom": "8px"}),
+                html.P("Capstone project for the NLP and GenAI program at Easy Learning AI.",
+                       className="h-section-body",
+                       style={"textAlign": "center", "margin": "0 auto 48px", "maxWidth": "100%"}),
+
+                html.Div(style={
+                    "display": "grid",
+                    "gridTemplateColumns": "repeat(auto-fit, minmax(220px, 1fr))",
+                    "gap": "24px",
+                    "maxWidth": "780px",
+                    "margin": "0 auto",
+                }, children=[
+                    # Ying
+                    html.Div(style={
+                        "background": "rgba(255,255,255,0.04)",
+                        "border": "0.5px solid rgba(255,255,255,0.08)",
+                        "borderRadius": "14px", "padding": "32px 24px", "textAlign": "center",
+                    }, children=[
+                        html.Img(src="/assets/Ying.png", style={
+                            "width": "80px", "height": "80px", "borderRadius": "50%",
+                            "objectFit": "cover", "marginBottom": "14px",
+                            "border": "2px solid rgba(58,171,255,0.3)",
+                        }),
+                        html.H4("Ying Huang", style={"fontSize": "16px", "marginBottom": "4px"}),
+                        html.P("github.com/yh51", style={"fontSize": "12px", "color": "#8ba5c4", "marginBottom": "14px"}),
+                        html.Img(src="/assets/YingQR.png", style={"width": "72px", "height": "72px", "opacity": "0.85"}),
+                        html.P("LinkedIn", style={"fontSize": "11px", "color": "#8ba5c4", "marginTop": "6px"}),
+                    ]),
+                    # Kristina
+                    html.Div(style={
+                        "background": "rgba(255,255,255,0.04)",
+                        "border": "0.5px solid rgba(255,255,255,0.08)",
+                        "borderRadius": "14px", "padding": "32px 24px", "textAlign": "center",
+                    }, children=[
+                        html.Img(src="/assets/Kristina.png", style={
+                            "width": "80px", "height": "80px", "borderRadius": "50%",
+                            "objectFit": "cover", "marginBottom": "14px",
+                            "border": "2px solid rgba(58,171,255,0.3)",
+                        }),
+                        html.H4("Kristina Liang", style={"fontSize": "16px", "marginBottom": "4px"}),
+                        html.P("github.com/liu-kristina", style={"fontSize": "12px", "color": "#8ba5c4", "marginBottom": "14px"}),
+                        html.Img(src="/assets/KristinaQR.png", style={"width": "72px", "height": "72px", "opacity": "0.85"}),
+                        html.P("LinkedIn", style={"fontSize": "11px", "color": "#8ba5c4", "marginTop": "6px"}),
+                    ]),
+                    # Moxi
+                    html.Div(style={
+                        "background": "rgba(255,255,255,0.04)",
+                        "border": "0.5px solid rgba(255,255,255,0.08)",
+                        "borderRadius": "14px", "padding": "32px 24px", "textAlign": "center",
+                    }, children=[
+                        html.Img(src="/assets/Moxi.png", style={
+                            "width": "80px", "height": "80px", "borderRadius": "50%",
+                            "objectFit": "cover", "marginBottom": "14px",
+                            "border": "2px solid rgba(58,171,255,0.3)",
+                        }),
+                        html.H4("Moxi Liang", style={"fontSize": "16px", "marginBottom": "4px"}),
+                        html.P("github.com/moxixmx533-ux", style={"fontSize": "12px", "color": "#8ba5c4", "marginBottom": "14px"}),
+                        html.Img(src="/assets/MoxiQR.png", style={"width": "72px", "height": "72px", "opacity": "0.85"}),
+                        html.P("LinkedIn", style={"fontSize": "11px", "color": "#8ba5c4", "marginTop": "6px"}),
+                    ]),
+                ]),
+            ]),
+        ]),
+
         # ── CUSTOMER LOGIN ─────────────────────────────────────────────────────
         html.Section(id="login", className="h-login", children=[
             html.Div(className="h-login-inner", children=[
@@ -259,10 +328,7 @@ layout = html.Div([
                 html.Div("HERMES", className="h-footer-brand"),
                 html.Small("AI Procurement · All data shown is fictional and for demo purposes only."),
             ], className="h-footer-brand"),
-            html.P("Built with Dash · Anthropic Claude · ChromaDB · SQLite",
-                   className="h-footer-note"),
         ]),
 
     ]),
 ], style={"margin": "0", "padding": "0"})
-
