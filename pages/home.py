@@ -3,7 +3,7 @@ from dash import html, Input, Output, callback
 import dash_bootstrap_components as dbc
 from database import get_connection, _execute, _use_postgres
 
-dash.register_page(__name__, path="/", title="Home", name="Home", order=0)
+dash.register_page(__name__, path="/home", title="Home", name="Home", order=0)
 
 
 # ── Live stat queries ─────────────────────────────────────────────────────────
