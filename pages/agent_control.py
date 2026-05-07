@@ -265,15 +265,16 @@ def get_supplier_scorecard() -> list[dict]:
                 SUM(CASE WHEN r.parsed_action IN ('APPROVE','APPROVE ANYWAY') THEN 1 ELSE 0 END) AS approved,
                 SUM(CASE WHEN r.parsed_action IN ('REJECT','STOP PURCHASE') THEN 1 ELSE 0 END) AS rejected,
                 SUM(CASE WHEN r.parsed_action IN ('CHANGE','PROVIDE NEW QUOTE') THEN 1 ELSE 0 END) AS changed,
-                AVG(d.suggested_order_qty) AS avg_qty
+                AVG(rec.suggested_order_qty) AS avg_qty
             FROM procurement_email_drafts d
             JOIN procurement_replies r ON r.draft_id = d.id
+            LEFT JOIN procurement_recommendations rec ON rec.id = d.recommendation_id
             GROUP BY d.supplier
             ORDER BY total DESC
         """).fetchall()
         result = []
         for row in rows:
-            total = row["total"] or 0
+            total    = row["total"] or 0
             approved = row["approved"] or 0
             result.append({
                 "supplier":      row["supplier"],
@@ -282,7 +283,7 @@ def get_supplier_scorecard() -> list[dict]:
                 "rejected":      row["rejected"] or 0,
                 "changed":       row["changed"] or 0,
                 "approval_rate": round(approved / total * 100) if total > 0 else 0,
-                "avg_qty":       round(row["avg_qty"] or 0, 1),
+                "avg_qty":       round(float(row["avg_qty"] or 0), 1),
             })
         return result
     except Exception:
