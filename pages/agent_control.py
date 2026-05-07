@@ -625,6 +625,8 @@ def layout():
         ], className="g-2"),
 
         # ── Supplier scorecard ──
+        dbc.Card(dbc.CardBody([
+            html.P("Supplier scorecard", className="fw-semibold mb-3", style={"fontSize": "13px"}),
             html.Div(
                 style={"borderRadius": "8px", "overflow": "hidden", "backgroundColor": "#0a1625"},
                 children=dbc.Table([
@@ -664,7 +666,7 @@ def layout():
                         ))
                     ]),
                 ], bordered=False, hover=False, size="sm", className="mb-0 scorecard-table",
-                   style={"backgroundColor": "transparent", "marginBottom": "0"}),
+                   style={"backgroundColor": "transparent"}),
             ),
         ]), className="mb-3"),
 
@@ -988,4 +990,3 @@ def resolve_flag(n_clicks):
 )
 def refresh_approval_history(n):
     return _render_approval_history(get_approval_history())
-
