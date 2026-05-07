@@ -625,10 +625,9 @@ def layout():
         ], className="g-2"),
 
         # ── Supplier scorecard ──
-        dbc.Card(dbc.CardBody([
-            html.P("Supplier scorecard", className="fw-semibold mb-3", style={"fontSize": "13px"}),
             html.Div(
-                dbc.Table([
+                style={"borderRadius": "8px", "overflow": "hidden", "backgroundColor": "#0a1625"},
+                children=dbc.Table([
                     html.Thead(html.Tr([
                         html.Th("Supplier",      style={"fontSize": "12px", "color": "#8ba5c4", "fontWeight": "500", "borderColor": "rgba(255,255,255,0.08)"}),
                         html.Th("Decisions",     style={"fontSize": "12px", "color": "#8ba5c4", "fontWeight": "500", "borderColor": "rgba(255,255,255,0.08)"}),
@@ -637,7 +636,7 @@ def layout():
                         html.Th("Rejected",      style={"fontSize": "12px", "color": "#8ba5c4", "fontWeight": "500", "borderColor": "rgba(255,255,255,0.08)"}),
                         html.Th("Changed",       style={"fontSize": "12px", "color": "#8ba5c4", "fontWeight": "500", "borderColor": "rgba(255,255,255,0.08)"}),
                         html.Th("Avg qty (kg)",  style={"fontSize": "12px", "color": "#8ba5c4", "fontWeight": "500", "borderColor": "rgba(255,255,255,0.08)"}),
-                    ], style={"backgroundColor": "rgba(255,255,255,0.04)"})),
+                    ], style={"backgroundColor": "#0a1625"})),
                     html.Tbody([
                         html.Tr([
                             html.Td(s["supplier"],  style={"fontSize": "12px", "fontWeight": "500", "color": "#e8f0fa", "borderColor": "rgba(255,255,255,0.06)"}),
@@ -655,7 +654,7 @@ def layout():
                             html.Td(s["rejected"], style={"fontSize": "12px", "color": "#E24B4A", "borderColor": "rgba(255,255,255,0.06)"}),
                             html.Td(s["changed"],  style={"fontSize": "12px", "color": "#f0a500", "borderColor": "rgba(255,255,255,0.06)"}),
                             html.Td(s["avg_qty"],  style={"fontSize": "12px", "color": "#d0dff0", "borderColor": "rgba(255,255,255,0.06)"}),
-                        ], style={"backgroundColor": "transparent"}) for s in scorecard
+                        ], style={"backgroundColor": "#0d1b2e" if scorecard.index(s) % 2 == 0 else "#0a1e35"}) for s in scorecard
                     ] if scorecard else [
                         html.Tr(html.Td(
                             "No supplier decisions yet.",
@@ -664,8 +663,8 @@ def layout():
                             style={"fontSize": "12px", "color": "#8ba5c4"},
                         ))
                     ]),
-                ], bordered=False, hover=False, size="sm", className="mb-0",
-                   style={"backgroundColor": "transparent"}),
+                ], bordered=False, hover=False, size="sm", className="mb-0 scorecard-table",
+                   style={"backgroundColor": "transparent", "marginBottom": "0"}),
             ),
         ]), className="mb-3"),
 
