@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import List
 
 import uuid
+import hashlib
 
 import os
 
@@ -27,7 +28,7 @@ except ImportError as e:
     # print("IMPORT ERROR:", e)
     _PDF_SUPPORT = False
 
-from procurement_agent import ProcurementAgent
+from agents.procurement_agent import ProcurementAgent
 
 os.makedirs("logs", exist_ok=True)
 
@@ -280,6 +281,148 @@ def sync_inventory_to_db(inventory: dict, db_path: str = "inventory.db") -> None
 # Gmail invoice bridge
 # ---------------------------------------------------------------------------
 
+def _to_float(value) -> float:
+    """Safely convert a value to float, returning 0.0 on failure."""
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.replace("$", "").replace(",", "").strip()
+        try:
+            return float(cleaned)
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+def _count_valid_line_items(inv: dict) -> int:
+    """Count line items with a non-empty description and non-zero quantity."""
+    count = 0
+    for li in (inv.get("line_items") or []):
+        desc = (li.get("description") or "").strip().lower()
+        if desc and desc != "unknown" and _to_float(li.get("quantity")) != 0.0:
+            count += 1
+    return count
+
+
+def _invoice_signature(inv: dict) -> str:
+    """
+    Compute a stable content-based dedup key for an invoice dict.
+
+    Includes: document_type, vendor_name, total_amount, sorted line-item
+    description+quantity pairs.  Deliberately excludes invoice_number so that
+    an anonymous duplicate (invoice_number=None) and a named copy of the same
+    invoice produce the same signature and are deduplicated.
+    """
+    doc_type = (inv.get("document_type") or "").strip().lower()
+    vendor = re.sub(r"\s+", " ", (inv.get("vendor_name") or "").strip().lower())
+    amount = f"{_to_float(inv.get('total_amount')):.4f}"
+    items = inv.get("line_items") or []
+    _ws = re.compile(r"\s+")
+    item_tokens = sorted(
+        _ws.sub(" ", (li.get("description") or "").strip().lower())
+        + f":{_to_float(li.get('quantity')):.4f}"
+        for li in items
+        if (li.get("description") or "").strip().lower() not in ("", "unknown")
+    )
+    payload = json.dumps(
+        {"doc_type": doc_type, "vendor": vendor, "amount": amount, "items": item_tokens},
+        sort_keys=True,
+    )
+    return "sig_" + hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def _dedup_invoice_batch(invoices: list) -> list:
+    """
+    Remove duplicates from a single-email extraction result.
+
+    Matching priority:
+      1. Same invoice_number → keep the candidate with MORE valid line_items.
+         When counts are equal, keep the existing one (stable ordering).
+      2. Same full content signature → same completeness rule; additionally,
+         if the incoming candidate has an invoice_number and the existing one
+         does not, copy invoice_number onto the better entry.
+
+    Genuinely different invoices — different invoice_number AND different
+    signature — are both retained regardless of completeness.
+    """
+    seen_nums: dict[str, int] = {}   # inv_num  -> result index
+    seen_sigs: dict[str, int] = {}   # sig      -> result index
+    result: list = []
+
+    for inv in invoices:
+        inv_num = (inv.get("invoice_number") or "").strip()
+        sig = _invoice_signature(inv)
+        incoming_count = _count_valid_line_items(inv)
+
+        # --- Duplicate by invoice_number ---
+        if inv_num and inv_num in seen_nums:
+            existing_idx = seen_nums[inv_num]
+            existing = result[existing_idx]
+            existing_count = _count_valid_line_items(existing)
+            if incoming_count > existing_count:
+                old_sig = _invoice_signature(existing)
+                result[existing_idx] = inv
+                if old_sig in seen_sigs and seen_sigs[old_sig] == existing_idx:
+                    del seen_sigs[old_sig]
+                seen_sigs[sig] = existing_idx
+                logger.info(
+                    "[DEDUP] invoice_number=%r upgraded: %d -> %d valid line item(s)",
+                    inv_num, existing_count, incoming_count,
+                )
+            else:
+                logger.info(
+                    "[DEDUP] invoice_number=%r skipped (existing has %d >= %d line items)",
+                    inv_num, existing_count, incoming_count,
+                )
+            continue
+
+        # --- Duplicate by content signature ---
+        if sig in seen_sigs:
+            existing_idx = seen_sigs[sig]
+            existing = result[existing_idx]
+            existing_count = _count_valid_line_items(existing)
+            existing_num = (existing.get("invoice_number") or "").strip()
+
+            if incoming_count > existing_count:
+                # Keep incoming's line items; use whichever invoice_number is available
+                effective_num = inv_num or existing_num
+                new_inv = dict(inv)
+                if effective_num and not inv_num:
+                    new_inv["invoice_number"] = effective_num
+                result[existing_idx] = new_inv
+                if effective_num:
+                    seen_nums[effective_num] = existing_idx
+                logger.info(
+                    "[DEDUP] sig match upgraded: %d -> %d valid line item(s), "
+                    "invoice_number=%r",
+                    existing_count, incoming_count, effective_num or None,
+                )
+            elif inv_num and not existing_num:
+                # Equal or fewer items but incoming has invoice_number — copy it
+                new_existing = dict(existing)
+                new_existing["invoice_number"] = inv_num
+                result[existing_idx] = new_existing
+                seen_nums[inv_num] = existing_idx
+                logger.info("[DEDUP] sig match: copied invoice_number=%r onto existing", inv_num)
+            else:
+                logger.info(
+                    "[DEDUP] sig match skipped (existing has %d >= %d line items)",
+                    existing_count, incoming_count,
+                )
+            continue
+
+        # --- New unique invoice ---
+        idx = len(result)
+        result.append(inv)
+        seen_sigs[sig] = idx
+        if inv_num:
+            seen_nums[inv_num] = idx
+
+    return result
+
+
 def _gmail_invoice_to_raw(inv: dict) -> dict:
     """Map extract_invoice_data() output → raw_invoice dict for extraction_agent()."""
     invoice_number = inv.get("invoice_number")
@@ -321,17 +464,73 @@ def load_inventory_from_stock_db(db_path: str = "inventory.db") -> list:
 
 def run_pipeline_from_gmail_invoices(extracted_invoices: list) -> None:
     """
-    Entry point for `cli.py agent once`.
+    Entry point for `cli.py agent once` and the label-routing invoice path.
     Takes the list of invoice dicts returned by invoice_agent.extract_invoice_data()
     and runs them through the same inventory + procurement pipeline as `run pdf`.
+
+    Belt-and-suspenders dedup (Layer 3): filter out invoices already applied.
+    Layers 1–2 live in email_router.run_label_routing (RFC Message-ID pre-check
+    + post-mark-read).
+
+    Within-batch: delegates to _dedup_invoice_batch() which picks the most
+    complete candidate (most valid line_items) when multiple dicts share the
+    same invoice_number or content signature.
+
+    Cross-batch: skips any invoice whose invoice_number (label "inv_applied")
+    or content signature (label "inv_sig_applied") was already applied in a
+    prior call.
     """
+    from database import is_message_processed, mark_message_processed
+
+    # Within-batch dedup — pick best candidate per unique invoice
+    batch = _dedup_invoice_batch(extracted_invoices)
+    if len(batch) < len(extracted_invoices):
+        logger.info(
+            "[PIPELINE] Within-batch dedup: %d -> %d invoice(s)",
+            len(extracted_invoices), len(batch),
+        )
+
+    # Cross-batch dedup — skip already-applied invoices
+    deduped = []
+    for inv in batch:
+        inv_num = str(inv.get("invoice_number") or "").strip()
+        sig = _invoice_signature(inv)
+
+        if inv_num and is_message_processed(inv_num, label="inv_applied"):
+            logger.info("[PIPELINE] Invoice %r already applied to inventory — skipping", inv_num)
+            continue
+        if is_message_processed(sig, label="inv_sig_applied"):
+            logger.info("[PIPELINE] Invoice sig %r already applied — skipping", sig)
+            continue
+
+        deduped.append(inv)
+
+    if not deduped:
+        return
+
+    # Debug: log selected candidate details
+    for inv in deduped:
+        logger.info(
+            "[PIPELINE] Applying invoice_number=%r | %d valid line item(s)",
+            inv.get("invoice_number") or None,
+            _count_valid_line_items(inv),
+        )
+
     scenario = {
         "scenario_id":       "gmail_import",
-        "description":       f"Gmail invoices: {len(extracted_invoices)} email(s)",
+        "description":       f"Gmail invoices: {len(deduped)} email(s)",
         "initial_inventory": load_inventory_from_stock_db(),
-        "invoices":          [_gmail_invoice_to_raw(inv) for inv in extracted_invoices],
+        "invoices":          [_gmail_invoice_to_raw(inv) for inv in deduped],
     }
     run_pipeline(scenario)
+
+    # Mark each applied invoice idempotent via both invoice_number and content sig
+    for inv in deduped:
+        inv_num = str(inv.get("invoice_number") or "").strip()
+        sig = _invoice_signature(inv)
+        if inv_num:
+            mark_message_processed(inv_num, label="inv_applied")
+        mark_message_processed(sig, label="inv_sig_applied")
 
 
 # ---------------------------------------------------------------------------

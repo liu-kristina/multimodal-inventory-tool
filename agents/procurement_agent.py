@@ -472,9 +472,10 @@ def send_order_approval_draft(draft_id: str) -> str:
             f"  REJECT\n"
             f"  Reason: <your reason>\n\n"
             f"  CHANGE\n"
-            f"  Supplier: <new supplier>\n"
-            f"  Quantity: <new quantity>\n"
-            f"  Reason: <your reason>\n\n"
+            f"  Supplier: <new supplier name>\n"
+            f"  Email: <supplier@example.com>\n"
+            f"  Quantity: <new quantity (optional)>\n"
+            f"  Reason: <your reason (optional)>\n\n"
             f"--- Supplier Order Email Preview ---\n"
             f"To: {draft['supplier_email']}\n"
             f"Subject: Purchase Order - {draft['product_name']}\n\n"
@@ -678,6 +679,7 @@ def _parse_memory_fields_from_reason(reason: str) -> dict:
         "lead_time": None,
         "shipping_cost": None,
         "estimated_total_cost": None,
+        "availability": None,
         "recommendation_action": None,
     }
     if not reason:
@@ -708,6 +710,10 @@ def _parse_memory_fields_from_reason(reason: str) -> dict:
         except ValueError:
             pass
 
+    m = re.search(r"- Availability: ([^.]+)\.", reason)
+    if m:
+        result["availability"] = m.group(1).strip()
+
     m = re.search(r"Decision: (LOW_RISK_RECOMMEND|NEEDS_HUMAN_REVIEW|REJECT)", reason)
     if m:
         result["recommendation_action"] = m.group(1)
@@ -720,11 +726,12 @@ def get_supplier_memory_score(conn, product_name: str, supplier: str) -> dict:
     Return a score and breakdown for a supplier based on past procurement decisions.
 
     Scoring weights:
-        APPROVE          +1.0
-        APPROVE_ANYWAY   +0.5   (human override — less confident signal)
-        REJECT           -1.0
-        STOP_PURCHASE    -1.0
-        PROVIDE_NEW_QUOTE -0.5
+        APPROVE           +1    (confirmed good supplier)
+        APPROVE_ANYWAY     0    (override — no alternative; neutral signal)
+        REJECT            -2    (active rejection signal)
+        STOP_PURCHASE     -3    (strongest negative — purchase halted)
+        CHANGE            -1    (user redirected away from this supplier)
+        PROVIDE_NEW_QUOTE  0    (neutral; supplier gets another evaluation chance)
     """
     rows = _execute(
         conn,
@@ -735,10 +742,11 @@ def get_supplier_memory_score(conn, product_name: str, supplier: str) -> dict:
 
     _weights = {
         "APPROVE":            1.0,
-        "APPROVE_ANYWAY":     0.5,
-        "REJECT":            -1.0,
-        "STOP_PURCHASE":     -1.0,
-        "PROVIDE_NEW_QUOTE": -0.5,
+        "APPROVE_ANYWAY":     0.0,
+        "REJECT":            -2.0,
+        "STOP_PURCHASE":     -3.0,
+        "CHANGE":            -1.0,
+        "PROVIDE_NEW_QUOTE":  0.0,
     }
 
     score          = 0.0
@@ -746,6 +754,7 @@ def get_supplier_memory_score(conn, product_name: str, supplier: str) -> dict:
     reject_count   = 0
     override_count = 0
     stop_count     = 0
+    change_count   = 0
     recent_reasons: list[str] = []
 
     for row in rows:
@@ -761,6 +770,8 @@ def get_supplier_memory_score(conn, product_name: str, supplier: str) -> dict:
                 recent_reasons.append(row["user_reason"])
         elif action == "STOP_PURCHASE":
             stop_count += 1
+        elif action == "CHANGE":
+            change_count += 1
 
     return {
         "supplier_score":        round(score, 2),
@@ -768,6 +779,7 @@ def get_supplier_memory_score(conn, product_name: str, supplier: str) -> dict:
         "reject_count":          reject_count,
         "override_count":        override_count,
         "stop_count":            stop_count,
+        "change_count":          change_count,
         "recent_reject_reasons": recent_reasons[-3:],
     }
 
@@ -823,15 +835,25 @@ def build_recommendation_reason(
             lines.append(f"  ! {flag}")
 
     if conn is not None:
-        ms = get_supplier_memory_score(conn, product_name, supplier)
-        total = ms["approval_count"] + ms["reject_count"] + ms["override_count"] + ms["stop_count"]
+        ms    = get_supplier_memory_score(conn, product_name, supplier)
+        total = (ms["approval_count"] + ms["reject_count"]
+                 + ms["override_count"] + ms["stop_count"] + ms["change_count"])
+        score = ms["supplier_score"]
+        lines.append("Memory signal:")
         if total > 0:
-            lines.append("Memory signal:")
             lines.append(f"  - Past approvals: {ms['approval_count']}")
             lines.append(f"  - Past rejections: {ms['reject_count']}")
-            lines.append(f"  - Supplier memory score: {ms['supplier_score']:.1f}")
+            if ms["change_count"]:
+                lines.append(f"  - Times redirected away: {ms['change_count']}")
+            lines.append(f"  - Supplier memory score: {score:.1f}")
+            if score < 0:
+                lines.append("  - Memory note: this supplier has previous negative feedback.")
+            else:
+                lines.append("  - Memory note: this supplier has previous approvals.")
             if ms["recent_reject_reasons"]:
                 lines.append(f"  - Recent rejection reasons: {'; '.join(ms['recent_reject_reasons'])}")
+        else:
+            lines.append("  - Memory note: no prior supplier feedback found.")
 
     return "\n".join(lines)
 
@@ -1107,6 +1129,73 @@ def create_and_send_fallback_rfq(
     saved = _save_draft(draft_data)
     result = send_procurement_draft(saved["id"])
     return result
+
+
+def create_and_send_change_rfq(
+    product_name: str,
+    new_supplier: str,
+    new_supplier_email: str,
+    reason: str = "",
+) -> str:
+    """
+    Upsert new_supplier into product_supplier_alternates for product_name,
+    then send a fresh RFQ to them.
+
+    Called when the human replies CHANGE (with Supplier + Email) to an approval
+    email. No recommendation or order is created here — the system waits for a
+    real quote reply, which the existing quote-parsing path then handles.
+
+    Returns a human-readable result message.
+    """
+    conn = get_connection()
+    try:
+        if _use_postgres:
+            _execute(conn,
+                """
+                INSERT INTO product_supplier_alternates
+                    (product_name, supplier, supplier_email, priority)
+                VALUES (?, ?, ?, 99)
+                ON CONFLICT (product_name, supplier) DO UPDATE SET
+                    supplier_email = excluded.supplier_email
+                """,
+                (product_name, new_supplier, new_supplier_email),
+            )
+        else:
+            _execute(conn,
+                """
+                INSERT OR REPLACE INTO product_supplier_alternates
+                    (product_name, supplier, supplier_email, priority)
+                VALUES (?, ?, ?, 99)
+                """,
+                (product_name, new_supplier, new_supplier_email),
+            )
+        conn.commit()
+        stock_row = _execute(conn,
+            "SELECT quantity_kg, reorder_at, unit FROM stock WHERE product_name = ?",
+            (product_name,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not stock_row:
+        return f"Stock row not found for {product_name} — cannot create change RFQ"
+
+    fake_row = {
+        "product_name": product_name,
+        "supplier":     new_supplier,
+        "quantity_kg":  float(stock_row["quantity_kg"]),
+        "reorder_at":   float(stock_row["reorder_at"]),
+        "unit":         stock_row["unit"] or "kg",
+    }
+    draft_data = _draft_from_row(fake_row)
+    draft_data["supplier_email"] = new_supplier_email  # use user-provided email directly
+    human_note = (
+        f"Human-requested supplier change: {reason}" if reason
+        else "Human-requested supplier change."
+    )
+    draft_data["reason"] = human_note + "\n\n" + draft_data["reason"]
+    saved = _save_draft(draft_data)
+    return send_procurement_draft(saved["id"])
 
 
 def send_no_alternative_notification(rec_id: int) -> str:

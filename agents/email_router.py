@@ -22,6 +22,15 @@ from email.header import decode_header
 
 _RUN_ID_PATTERN = re.compile(r"\[RUN_ID=([^\]]+)\]")
 
+# Matches invoice-like IDs in email subjects: 3 segments where the last is
+# numeric, e.g. CUST-DEMO-001, INV-2024-001, PO-AB-123.
+# Deliberately requires a numeric final segment to avoid matching label markers
+# such as [INV-SALES] (which has no numeric segment).
+_SUBJECT_INV_ID_RE = re.compile(
+    r"\b([A-Z]{2,10}-[A-Z0-9]{2,10}-[0-9]{1,10})\b",
+    re.IGNORECASE,
+)
+
 # Actions that indicate an internal approval reply, not a supplier quote.
 # Mirrors _VALID_ACTIONS in email_feedback_agent.py — kept local to avoid
 # importing that module here (it pulls in invoice_agent / pdfplumber).
@@ -44,6 +53,22 @@ def _detect_approval_action(body: str) -> str | None:
         action = stripped.upper()
         return action if action in _APPROVAL_ACTIONS else None
     return None
+
+def _fill_missing_invoice_numbers(invoice_data: list, subject: str) -> None:
+    """
+    Task D: fill invoice_number from the email subject when extraction left it
+    blank.  Uses a generic regex — no hardcoded IDs.  Modifies in-place.
+    Takes the last matching ID in the subject (most likely the actual invoice
+    ID when the subject also contains label tags like [INV-SALES]).
+    """
+    matches = _SUBJECT_INV_ID_RE.findall(subject)
+    if not matches:
+        return
+    subject_inv_id = matches[-1]
+    for inv in invoice_data:
+        if not (inv.get("invoice_number") or "").strip():
+            inv["invoice_number"] = subject_inv_id
+
 
 SUPPORTED_LABELS: list[str] = [
     "sales/invoice",
@@ -100,12 +125,17 @@ def fetch_unread_by_label(mail: imaplib.IMAP4_SSL, label: str) -> list[dict]:
             body = payload.decode("utf-8", errors="ignore") if payload else ""
 
         run_id_match = _RUN_ID_PATTERN.search(subject)
-        run_id     = run_id_match.group(1) if run_id_match else None
-        message_id = mid.decode() if isinstance(mid, bytes) else str(mid)
+        run_id = run_id_match.group(1) if run_id_match else None
+
+        # Prefer the RFC 2822 Message-ID header as a stable, session-independent
+        # dedup key.  IMAP sequence numbers are reassigned after EXPUNGE or
+        # reconnect and must NOT be used as the dedup key.
+        rfc_mid    = msg.get("Message-ID", "").strip()
+        message_id = rfc_mid if rfc_mid else (mid.decode() if isinstance(mid, bytes) else str(mid))
 
         results.append({
-            "mid":        mid,
-            "message_id": message_id,
+            "mid":        mid,       # IMAP seq — only for mail.store / mark_as_read
+            "message_id": message_id,  # RFC Message-ID — used for DB dedup
             "msg":        msg,
             "subject":    subject,
             "sender":     sender,
@@ -196,6 +226,12 @@ def _route_invoice(message: dict, document_type: str) -> None:
     Process a single invoice email via invoice_agent.
     Forces document_type from the label instead of relying on LLM classification.
     Then runs the inventory pipeline on the extracted data.
+
+    Pre-pipeline steps (tasks A + D):
+      1. Fill blank invoice_numbers from the email subject (generic regex).
+      2. Deduplicate within this email's extraction so one PDF that produces
+         N chunks via _split_invoice_chunks applies its inventory delta exactly
+         once even if some chunks yield invoice_number=None.
     """
     try:
         from agents.invoice_agent import process_invoice_message
@@ -203,9 +239,15 @@ def _route_invoice(message: dict, document_type: str) -> None:
         print(f"[ROUTING] invoice: invoice_agent unavailable (simulation mode) — skipping")
         return
     try:
-        from scripts.run_pipeline import run_pipeline_from_gmail_invoices
+        from scripts.run_pipeline import (
+            run_pipeline_from_gmail_invoices,
+            _dedup_invoice_batch,
+            _count_valid_line_items,
+        )
     except ImportError:
         run_pipeline_from_gmail_invoices = None
+        _dedup_invoice_batch = None
+        _count_valid_line_items = None
 
     try:
         result = process_invoice_message(message, forced_document_type=document_type)
@@ -213,12 +255,30 @@ def _route_invoice(message: dict, document_type: str) -> None:
         print(f"[ROUTING] invoice: extraction error ({exc!r}) — skipping")
         result = None
     if result and result.get("invoice_data"):
+        invoice_data = result["invoice_data"]
+
+        # Task D: fill any blank invoice_numbers from the subject line
+        _fill_missing_invoice_numbers(invoice_data, message.get("subject", ""))
+
+        # Task A: collapse duplicate dicts produced by PDF chunking
+        if _dedup_invoice_batch:
+            before = len(invoice_data)
+            invoice_data = _dedup_invoice_batch(invoice_data)
+            after = len(invoice_data)
+            best = invoice_data[0] if invoice_data else {}
+            n_items = _count_valid_line_items(best) if _count_valid_line_items else "?"
+            print(
+                f"[ROUTING] pre-pipeline dedup: {before} -> {after} dict(s) "
+                f"| invoice_number={best.get('invoice_number')!r} "
+                f"| {n_items} valid line item(s)"
+            )
+
         print(
             f"[ROUTING] invoice extracted: #{result.get('invoice_number')} "
             f"from {result.get('vendor')} — ${result.get('amount', 0):.2f}"
         )
         if run_pipeline_from_gmail_invoices:
-            run_pipeline_from_gmail_invoices(result["invoice_data"])
+            run_pipeline_from_gmail_invoices(invoice_data)
     else:
         print(f"[ROUTING] invoice: no data extracted from {message.get('subject', '')!r}")
 
@@ -229,20 +289,27 @@ def run_label_routing() -> None:
     """
     Connect to Gmail, iterate every supported label, and route unread messages.
 
+    Duplicate-prevention strategy (three layers):
+      1. Pre-check: skip any message whose (RFC Message-ID, label) pair is
+         already in processed_messages before touching inventory.
+      2. Post-mark: after a successful invoice route, mark the pair processed
+         AND mark the Gmail message as read so the next UNSEEN search skips it.
+      3. Procurement handlers call mark_done themselves (same DB write + read).
+
     - Procurement labels: mark_done is called inside the handler (DB + read flag).
     - Invoice labels: marked read by this function after routing returns.
     """
-    from database import mark_message_processed
+    from database import is_message_processed, mark_message_processed
     from agents.invoice_agent import connect_gmail, mark_as_read, add_gmail_label, INVOICE_LABEL
 
     mail = connect_gmail()
 
-    def _make_mark_done(current_label: str):
-        def _mark_done(message_id: str) -> None:
-            mark_message_processed(message_id, label=current_label)
-            mail.select(f'"{current_label}"')
-            mid_bytes = message_id.encode() if isinstance(message_id, str) else message_id
-            mark_as_read(mail, mid_bytes)
+    def _make_msg_mark_done(rfc_id: str, imap_mid, lbl: str):
+        """Per-message closure: uses RFC id for DB dedup, IMAP mid for IMAP ops."""
+        def _mark_done(_: str) -> None:
+            mark_message_processed(rfc_id, label=lbl)
+            mail.select(f'"{lbl}"')
+            mark_as_read(mail, imap_mid)
         return _mark_done
 
     for label in SUPPORTED_LABELS:
@@ -251,12 +318,22 @@ def run_label_routing() -> None:
             continue
 
         print(f"[ROUTING] {len(messages)} unread message(s) in label '{label}'")
-        mark_done = _make_mark_done(label)
 
         for msg_dict in messages:
+            # Layer 1: skip already-processed messages before touching inventory
+            if is_message_processed(msg_dict["message_id"], label=label):
+                print(
+                    f"[ROUTING] {msg_dict['message_id']!r} already processed "
+                    f"under '{label}' — skipping"
+                )
+                continue
+
+            mark_done = _make_msg_mark_done(
+                msg_dict["message_id"], msg_dict["mid"], label
+            )
             route_email_by_label(label, msg_dict, mark_done_fn=mark_done)
 
-            # Invoice handlers don't call mark_done; handle here
+            # Invoice handlers don't call mark_done; handle here (Layer 2)
             if label in ("sales/invoice", "purchase/receipt"):
                 mail.select(f'"{label}"')
                 add_gmail_label(mail, msg_dict["mid"], INVOICE_LABEL)

@@ -169,8 +169,7 @@ def _extract_text_body(msg) -> str:
 # ── Parse reply ────────────────────────────────────────────────────────────────
 
 _VALID_ACTIONS = {"APPROVE", "REJECT", "CHANGE", "APPROVE ANYWAY", "STOP PURCHASE", "PROVIDE NEW QUOTE"}
-# _FIELD_KEYS    = {"supplier", "email", "quantity", "reason"}
-_FIELD_KEYS    = {"supplier", "quantity", "reason"}  
+_FIELD_KEYS    = {"supplier", "email", "quantity", "reason"}
 # Lines that signal the start of an email signature / quoted history
 _STOP_PATTERNS = re.compile(
     r"^(--|__|\-\-\-|On .+ wrote:|From:|>)", re.IGNORECASE
@@ -209,8 +208,7 @@ def parse_reply(body: str) -> dict:
             "reason":   str | None,
         }
     """
-    # result: dict = {"action": "UNKNOWN", "supplier": None, "email": None, "quantity": None, "reason": None}
-    result: dict = {"action": "UNKNOWN", "supplier": None, "quantity": None, "reason": None}   
+    result: dict = {"action": "UNKNOWN", "supplier": None, "email": None, "quantity": None, "reason": None}
 
     lines = []
     for raw in body.splitlines():
@@ -236,13 +234,15 @@ def parse_reply(body: str) -> dict:
             continue
         if key == "supplier":
             result["supplier"] = value
-        # elif key == "email":
-        #     result["email"] = value
+        elif key == "email":
+            result["email"] = value
         elif key == "quantity":
-            try:
-                result["quantity"] = float(value)
-            except ValueError:
-                pass
+            m = re.match(r"([\d,]+\.?\d*)", value.strip())
+            if m:
+                try:
+                    result["quantity"] = float(m.group(1).replace(",", ""))
+                except ValueError:
+                    pass
         elif key == "reason":
             result["reason"] = value
 
