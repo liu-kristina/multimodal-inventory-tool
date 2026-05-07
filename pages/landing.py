@@ -220,21 +220,7 @@ layout = html.Div([
             html.Div(style={"maxWidth": "1140px", "margin": "0 auto"}, children=[
                 html.P("The team", className="h-section-label", style={"textAlign": "center"}),
                 html.H2("Built by", className="h-section-title",
-                        style={"textAlign": "center", "maxWidth": "100%", "marginBottom": "8px"}),
-                html.Div(style={"textAlign": "center", "margin": "0 auto 48px", "display": "flex",
-                                "alignItems": "center", "justifyContent": "center", "gap": "10px"}, children=[
-                    html.Span("Capstone project · NLP and GenAI program at",
-                              style={"fontSize": "14px", "color": "#8ba5c4"}),
-                    html.A(
-                        html.Img(src="/assets/easylearningai.png",
-                                 style={"height": "22px", "width": "auto", "verticalAlign": "middle",
-                                        "opacity": "0.85", "filter": "brightness(1.4)"}),
-                        href="https://easylearning.ai",
-                        target="_blank",
-                        title="Easy Learning AI",
-                        style={"display": "inline-flex", "alignItems": "center"},
-                    ),
-                ]),
+                        style={"textAlign": "center", "maxWidth": "100%", "marginBottom": "48px"}),
 
                 html.Div(style={
                     "display": "grid",
@@ -337,7 +323,7 @@ layout = html.Div([
         html.Footer(className="h-footer", children=[
             html.Div(children=[
                 html.Div("HERMES", className="h-footer-brand"),
-                html.Small("AI Procurement · All data shown is fictional and for demo purposes only."),
+                html.Small("AI Procurement"),
             ], className="h-footer-brand"),
         ]),
 

@@ -68,7 +68,6 @@ sidebar = dbc.Nav(
         dbc.NavLink("Home",           href="/home",           active="exact", className="px-3 py-2"),
         dbc.NavLink("Chat",           href="/chat",           active="exact", className="px-3 py-2"),
         dbc.NavLink("Inventory",      href="/inventory",      active="exact", className="px-3 py-2"),
-        dbc.NavLink("Upload Invoice", href="/upload",         active="exact", className="px-3 py-2"),
         dbc.NavLink("Agent Control",  href="/agent-control",  active="exact", className="px-3 py-2"),
         dbc.NavLink("About",          href="/about",          active="exact", className="px-3 py-2"),
         html.Hr(className="my-2"),
