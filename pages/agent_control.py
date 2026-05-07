@@ -9,6 +9,7 @@ from datetime import datetime
 
 import dash
 import dash_bootstrap_components as dbc
+import plotly.graph_objects as go
 from dash import Input, Output, State, callback, dcc, html
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -192,6 +193,103 @@ def get_approval_history() -> dict:
         conn.close()
 
 
+def get_approval_rate_over_time() -> dict:
+    """Return approval rate grouped by week for line chart."""
+    conn = get_connection()
+    try:
+        if _use_postgres:
+            rows = _execute(conn, """
+                SELECT
+                    DATE_TRUNC('week', r.created_at) AS week,
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN r.parsed_action IN ('APPROVE','APPROVE ANYWAY') THEN 1 ELSE 0 END) AS approved
+                FROM procurement_replies r
+                GROUP BY week
+                ORDER BY week ASC
+                LIMIT 12
+            """).fetchall()
+        else:
+            rows = _execute(conn, """
+                SELECT
+                    strftime('%Y-%W', r.created_at) AS week,
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN r.parsed_action IN ('APPROVE','APPROVE ANYWAY') THEN 1 ELSE 0 END) AS approved
+                FROM procurement_replies r
+                GROUP BY week
+                ORDER BY week ASC
+                LIMIT 12
+            """).fetchall()
+        weeks, rates = [], []
+        for row in rows:
+            total = row["total"] or 0
+            approved = row["approved"] or 0
+            weeks.append(str(row["week"]))
+            rates.append(round(approved / total * 100, 1) if total > 0 else 0)
+        return {"weeks": weeks, "rates": rates}
+    except Exception:
+        return {"weeks": [], "rates": []}
+    finally:
+        conn.close()
+
+
+def get_rejection_reasons() -> list[dict]:
+    """Return rejection reasons grouped by reason text."""
+    conn = get_connection()
+    try:
+        rows = _execute(conn, """
+            SELECT
+                COALESCE(parsed_reason, 'No reason given') AS reason,
+                COUNT(*) AS count
+            FROM procurement_replies
+            WHERE parsed_action IN ('REJECT', 'STOP PURCHASE', 'CHANGE', 'PROVIDE NEW QUOTE')
+            GROUP BY reason
+            ORDER BY count DESC
+            LIMIT 8
+        """).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_supplier_scorecard() -> list[dict]:
+    """Return per-supplier approval rate, total decisions, avg quantity."""
+    conn = get_connection()
+    try:
+        rows = _execute(conn, """
+            SELECT
+                d.supplier,
+                COUNT(*) AS total,
+                SUM(CASE WHEN r.parsed_action IN ('APPROVE','APPROVE ANYWAY') THEN 1 ELSE 0 END) AS approved,
+                SUM(CASE WHEN r.parsed_action IN ('REJECT','STOP PURCHASE') THEN 1 ELSE 0 END) AS rejected,
+                SUM(CASE WHEN r.parsed_action IN ('CHANGE','PROVIDE NEW QUOTE') THEN 1 ELSE 0 END) AS changed,
+                AVG(d.suggested_order_qty) AS avg_qty
+            FROM procurement_email_drafts d
+            JOIN procurement_replies r ON r.draft_id = d.id
+            GROUP BY d.supplier
+            ORDER BY total DESC
+        """).fetchall()
+        result = []
+        for row in rows:
+            total = row["total"] or 0
+            approved = row["approved"] or 0
+            result.append({
+                "supplier":      row["supplier"],
+                "total":         total,
+                "approved":      approved,
+                "rejected":      row["rejected"] or 0,
+                "changed":       row["changed"] or 0,
+                "approval_rate": round(approved / total * 100) if total > 0 else 0,
+                "avg_qty":       round(row["avg_qty"] or 0, 1),
+            })
+        return result
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
 def log_run(message: str, status: str = "ok") -> None:
     conn = get_connection()
     local_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -219,6 +317,9 @@ def layout():
     active   = is_running()
     drafts   = get_pending_drafts()
     approvals = get_approval_history()
+    approval_trend   = get_approval_rate_over_time()
+    rejection_reasons = get_rejection_reasons()
+    scorecard        = get_supplier_scorecard()
 
     label_style = {
         "fontSize": "11px",
@@ -444,22 +545,121 @@ def layout():
             ])
         ], className="mb-3"),
 
-        # ── Procurement drafts ──
-        html.P("Pending drafts", style=label_style),
-        dbc.Card([
-            dbc.CardBody([
-                html.Div(
-                    id="drafts-container",
-                    children=[draft_card(d) for d in drafts] if drafts else [
-                        html.Small("No procurement drafts awaiting approval.", className="text-muted")
-                    ],
+        # ── Procurement quality dashboard ──
+        html.P("Procurement agent quality", style=label_style),
+        dbc.Row([
+
+            # ── Chart 1: Approval rate over time ──
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.P("Approval rate over time", className="fw-semibold mb-2", style={"fontSize": "13px"}),
+                dcc.Graph(
+                    figure=go.Figure(
+                        data=[go.Scatter(
+                            x=approval_trend["weeks"],
+                            y=approval_trend["rates"],
+                            mode="lines+markers",
+                            line={"color": "#1D9E75", "width": 2},
+                            marker={"size": 6},
+                            hovertemplate="%{y}%<extra></extra>",
+                        )],
+                        layout=go.Layout(
+                            margin={"t": 10, "b": 40, "l": 40, "r": 10},
+                            yaxis={"range": [0, 100], "ticksuffix": "%", "gridcolor": "#f0f0f0"},
+                            xaxis={"showgrid": False},
+                            plot_bgcolor="white",
+                            paper_bgcolor="white",
+                            height=200,
+                            annotations=[{
+                                "text": "No data yet",
+                                "xref": "paper", "yref": "paper",
+                                "x": 0.5, "y": 0.5,
+                                "showarrow": False,
+                                "font": {"color": "#aaa"},
+                            }] if not approval_trend["weeks"] else [],
+                        )
+                    ),
+                    config={"displayModeBar": False},
+                    style={"height": "200px"},
                 ),
-                html.Small(
-                    "Drafts are only sent when you click Send. They are kept in memory for the current app run.",
-                    className="text-muted d-block mt-2",
+            ])), md=6, className="mb-3"),
+
+            # ── Chart 2: Rejection reasons ──
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.P("Rejection reasons", className="fw-semibold mb-2", style={"fontSize": "13px"}),
+                dcc.Graph(
+                    figure=go.Figure(
+                        data=[go.Bar(
+                            x=[r["count"] for r in rejection_reasons],
+                            y=[r["reason"] for r in rejection_reasons],
+                            orientation="h",
+                            marker_color="#E24B4A",
+                            hovertemplate="%{x} rejection(s)<extra></extra>",
+                        )] if rejection_reasons else [],
+                        layout=go.Layout(
+                            margin={"t": 10, "b": 20, "l": 120, "r": 10},
+                            xaxis={"showgrid": False},
+                            yaxis={"autorange": "reversed"},
+                            plot_bgcolor="white",
+                            paper_bgcolor="white",
+                            height=200,
+                            annotations=[{
+                                "text": "No rejections yet",
+                                "xref": "paper", "yref": "paper",
+                                "x": 0.5, "y": 0.5,
+                                "showarrow": False,
+                                "font": {"color": "#aaa"},
+                            }] if not rejection_reasons else [],
+                        )
+                    ),
+                    config={"displayModeBar": False},
+                    style={"height": "200px"},
                 ),
-            ])
-        ], className="mb-3"),
+            ])), md=6, className="mb-3"),
+
+        ], className="g-2"),
+
+        # ── Supplier scorecard ──
+        dbc.Card(dbc.CardBody([
+            html.P("Supplier scorecard", className="fw-semibold mb-3", style={"fontSize": "13px"}),
+            html.Div(
+                dbc.Table([
+                    html.Thead(html.Tr([
+                        html.Th("Supplier", style={"fontSize": "12px"}),
+                        html.Th("Decisions", style={"fontSize": "12px"}),
+                        html.Th("Approval rate", style={"fontSize": "12px"}),
+                        html.Th("Approved", style={"fontSize": "12px"}),
+                        html.Th("Rejected", style={"fontSize": "12px"}),
+                        html.Th("Changed", style={"fontSize": "12px"}),
+                        html.Th("Avg qty (kg)", style={"fontSize": "12px"}),
+                    ])),
+                    html.Tbody([
+                        html.Tr([
+                            html.Td(s["supplier"], style={"fontSize": "12px", "fontWeight": "500"}),
+                            html.Td(s["total"], style={"fontSize": "12px"}),
+                            html.Td([
+                                dbc.Progress(
+                                    value=s["approval_rate"],
+                                    color="success" if s["approval_rate"] >= 70 else "warning" if s["approval_rate"] >= 40 else "danger",
+                                    style={"height": "8px", "width": "80px", "display": "inline-block", "marginRight": "6px"},
+                                ),
+                                html.Span(f"{s['approval_rate']}%", style={"fontSize": "11px"}),
+                            ]),
+                            html.Td(s["approved"], style={"fontSize": "12px", "color": "#1D9E75"}),
+                            html.Td(s["rejected"], style={"fontSize": "12px", "color": "#E24B4A"}),
+                            html.Td(s["changed"], style={"fontSize": "12px", "color": "#f0a500"}),
+                            html.Td(s["avg_qty"], style={"fontSize": "12px"}),
+                        ]) for s in scorecard
+                    ] if scorecard else [
+                        html.Tr(html.Td(
+                            "No supplier decisions yet.",
+                            colSpan=7,
+                            className="text-muted text-center",
+                            style={"fontSize": "12px"},
+                        ))
+                    ]),
+                ], bordered=False, hover=True, size="sm", className="mb-0"),
+            ),
+        ]), className="mb-3"),
 
         # ── Approval history ──
         html.P("Approval history", style=label_style),
