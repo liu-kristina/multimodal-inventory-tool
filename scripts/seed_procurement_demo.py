@@ -70,8 +70,8 @@ def _format_dt(dt: datetime) -> str:
 
 def seed(conn):
     # Check if already seeded
-    existing = _execute(conn, "SELECT COUNT(*) FROM procurement_replies").fetchone()
-    count = existing[0] if existing else 0
+    existing = _execute(conn, "SELECT COUNT(*) AS cnt FROM procurement_replies").fetchone()
+    count = existing["cnt"] if existing else 0
     if count > 5:
         print(f"Already have {count} procurement replies — skipping seed.")
         return
@@ -204,3 +204,4 @@ if __name__ == "__main__":
         seed(conn)
     finally:
         conn.close()
+
