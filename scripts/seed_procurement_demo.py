@@ -34,11 +34,11 @@ APPROVAL_USER = "yingh16@uci.edu"
 
 # Weighted actions per supplier — some suppliers are more reliable than others
 SUPPLIER_WEIGHTS = {
-    "Pacific Rim BioMaterials Co.":      ["APPROVE", "APPROVE", "APPROVE", "CHANGE", "REJECT"],
-    "Jiaxing Natural Products Ltd":      ["APPROVE", "APPROVE", "APPROVE", "APPROVE", "CHANGE"],
-    "Shanghai BioSupply International":  ["APPROVE", "APPROVE", "REJECT", "REJECT", "CHANGE"],
-    "Zhejiang Green Botanicals Corp":    ["APPROVE", "APPROVE", "APPROVE", "CHANGE", "CHANGE"],
-    "Guangzhou Nutra Raw Materials Inc": ["APPROVE", "REJECT", "REJECT", "CHANGE", "CHANGE"],
+    "Pacific Rim BioMaterials Co.":      ["APPROVE", "APPROVE", "APPROVE", "APPROVE", "CHANGE", "REJECT"],
+    "Jiaxing Natural Products Ltd":      ["APPROVE", "APPROVE", "APPROVE", "APPROVE", "APPROVE", "CHANGE"],
+    "Shanghai BioSupply International":  ["APPROVE", "APPROVE", "APPROVE", "CHANGE", "REJECT", "REJECT"],
+    "Zhejiang Green Botanicals Corp":    ["APPROVE", "APPROVE", "APPROVE", "APPROVE", "CHANGE", "CHANGE"],
+    "Guangzhou Nutra Raw Materials Inc": ["APPROVE", "APPROVE", "CHANGE", "CHANGE", "REJECT", "REJECT"],
 }
 
 REJECTION_REASONS = [
@@ -72,7 +72,7 @@ def seed(conn):
     # Check if already seeded
     existing = _execute(conn, "SELECT COUNT(*) AS cnt FROM procurement_replies").fetchone()
     count = existing["cnt"] if existing else 0
-    if count > 5:
+    if count > 20:
         print(f"Already have {count} procurement replies — skipping seed.")
         return
 
@@ -81,8 +81,8 @@ def seed(conn):
     inserted_replies = 0
 
     for weeks_ago in range(12, 0, -1):
-        # Pick 1-2 products to procure this week
-        n_products = random.randint(1, 2)
+        # Pick 3-4 products to procure this week
+        n_products = random.randint(3, 4)
         week_products = random.sample(PRODUCTS, n_products)
 
         for product_name, supplier, supplier_email in week_products:
