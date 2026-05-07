@@ -51,7 +51,7 @@ business_context_card = dbc.Card(
             style={'fontSize': '14px'}
         ),
         html.Hr(className="my-3"),
-        html.H6("California Nutraceuticals", className="fw-bold mb-2"),
+        html.H6("Example customer: California Nutraceuticals *", className="fw-bold mb-2"),
         html.P(
             "A family-owned nutraceutical ingredients distributor with 5–20 employees, acting as the "
             "exclusive North American importer for one or more overseas manufacturers (e.g., a collagen "
@@ -71,25 +71,6 @@ business_context_card = dbc.Card(
 )
 
 
-# ── Easy Learning card ─────────────────────────────────────────────────────────
-
-description_card = dbc.Card(
-    dbc.CardBody([
-        html.P(
-            "This application was developed as the capstone project for the NLP and GenAI program from Easy Learning.",
-            className="text-center mb-3",
-            style={'fontSize': '15px', 'color': '#004ad8'}
-        ),
-        html.Img(
-            src=dash.get_asset_url('easylearningai.png'),
-            style={'width': '220px', 'height': 'auto', 'display': 'block', 'margin': '0 auto'}
-        ),
-    ]),
-    className="shadow-sm border-0 mx-auto mt-2 mb-4",
-    style={'maxWidth': '560px', 'backgroundColor': '#e5e5e5', 'borderRadius': '10px'}
-)
-
-
 # ── Layout ─────────────────────────────────────────────────────────────────────
 
 layout = html.Div([
@@ -97,5 +78,4 @@ layout = html.Div([
     business_context_card,
     privacy_notice,
     tech_stack_line,
-    description_card,
 ])

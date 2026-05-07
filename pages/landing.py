@@ -221,9 +221,20 @@ layout = html.Div([
                 html.P("The team", className="h-section-label", style={"textAlign": "center"}),
                 html.H2("Built by", className="h-section-title",
                         style={"textAlign": "center", "maxWidth": "100%", "marginBottom": "8px"}),
-                html.P("Capstone project for the NLP and GenAI program at Easy Learning AI.",
-                       className="h-section-body",
-                       style={"textAlign": "center", "margin": "0 auto 48px", "maxWidth": "100%"}),
+                html.Div(style={"textAlign": "center", "margin": "0 auto 48px", "display": "flex",
+                                "alignItems": "center", "justifyContent": "center", "gap": "10px"}, children=[
+                    html.Span("Capstone project · NLP and GenAI program at",
+                              style={"fontSize": "14px", "color": "#8ba5c4"}),
+                    html.A(
+                        html.Img(src="/assets/easylearningai.png",
+                                 style={"height": "22px", "width": "auto", "verticalAlign": "middle",
+                                        "opacity": "0.85", "filter": "brightness(1.4)"}),
+                        href="https://easylearningai.com",
+                        target="_blank",
+                        title="Easy Learning AI",
+                        style={"display": "inline-flex", "alignItems": "center"},
+                    ),
+                ]),
 
                 html.Div(style={
                     "display": "grid",
