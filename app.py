@@ -6,6 +6,44 @@ Run:  python app.py  →  http://localhost:8050
 import dash
 import dash_bootstrap_components as dbc
 from dash import html, dcc, Input, Output
+import plotly.io as pio
+import plotly.graph_objects as go
+
+# ── Global Plotly dark theme ──────────────────────────────────────────────────
+# Applied to every figure in the app automatically.
+# Individual pages can still override per-chart if needed.
+
+pio.templates["hermes"] = go.layout.Template(
+    layout=go.Layout(
+        paper_bgcolor="#0f2035",
+        plot_bgcolor="#0f2035",
+        font=dict(family="DM Sans, sans-serif", color="#8ba5c4", size=12),
+        title=dict(font=dict(color="#ffffff", size=15)),
+        xaxis=dict(
+            gridcolor="rgba(255,255,255,0.07)",
+            linecolor="rgba(255,255,255,0.12)",
+            tickfont=dict(color="#8ba5c4"),
+            zerolinecolor="rgba(255,255,255,0.1)",
+        ),
+        yaxis=dict(
+            gridcolor="rgba(255,255,255,0.07)",
+            linecolor="rgba(255,255,255,0.12)",
+            tickfont=dict(color="#8ba5c4"),
+            zerolinecolor="rgba(255,255,255,0.1)",
+        ),
+        legend=dict(
+            bgcolor="rgba(15,32,53,0.8)",
+            bordercolor="rgba(255,255,255,0.1)",
+            borderwidth=1,
+            font=dict(color="#d0dff0"),
+        ),
+        colorway=[
+            "#3aabff", "#2ecc71", "#f5b942",
+            "#e74c3c", "#a78bfa", "#34d399",
+        ],
+    )
+)
+pio.templates.default = "hermes"
 
 app = dash.Dash(
     __name__,

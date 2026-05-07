@@ -1,0 +1,456 @@
+/* ═══════════════════════════════════════════════════════════
+   hermes_app.css  —  Dark theme for Hermes AI Procurement
+   Drop into your assets/ folder. Dash loads it automatically.
+   ══════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500&display=swap');
+
+/* ── BASE ─────────────────────────────────────────────── */
+body {
+  background: #0d1b2e !important;
+  color: #e8f0fa !important;
+  font-family: 'DM Sans', sans-serif !important;
+}
+
+/* ── SIDEBAR ─────────────────────────────────────────── */
+#app-sidebar {
+  background: #0a1625 !important;
+  border-right: 0.5px solid rgba(255,255,255,0.07) !important;
+}
+
+#app-sidebar .nav-link {
+  color: #8ba5c4 !important;
+  font-size: 14px !important;
+  font-weight: 400 !important;
+  border-radius: 6px !important;
+  margin: 1px 8px !important;
+  padding: 8px 14px !important;
+  transition: background 0.15s, color 0.15s !important;
+}
+
+#app-sidebar .nav-link:hover {
+  background: rgba(255,255,255,0.06) !important;
+  color: #fff !important;
+}
+
+#app-sidebar .nav-link.active {
+  background: rgba(26,111,196,0.25) !important;
+  color: #3aabff !important;
+  font-weight: 500 !important;
+}
+
+#app-sidebar .border-bottom {
+  border-color: rgba(255,255,255,0.07) !important;
+}
+
+#app-sidebar h6 {
+  color: #ffffff !important;
+  font-family: 'Syne', sans-serif !important;
+  letter-spacing: 1px !important;
+}
+
+#app-sidebar small {
+  color: #3aabff !important;
+}
+
+/* ── MAIN CONTENT AREA ───────────────────────────────── */
+#page-content {
+  background: #0d1b2e !important;
+}
+
+/* ── TYPOGRAPHY ──────────────────────────────────────── */
+h1, h2, h3, h4, h5, h6 {
+  color: #ffffff !important;
+  font-family: 'Syne', sans-serif !important;
+  letter-spacing: -0.3px;
+}
+
+p {
+  color: #d0dff0 !important;
+}
+
+span, li, dt, dd {
+  color: #d0dff0;
+}
+
+label {
+  color: #b0c4d8 !important;
+  font-size: 13px !important;
+}
+
+small {
+  color: #8ba5c4 !important;
+}
+
+strong, b {
+  color: #ffffff !important;
+}
+
+code, pre {
+  background: rgba(255,255,255,0.06) !important;
+  color: #3aabff !important;
+  border-radius: 4px !important;
+  padding: 2px 6px !important;
+}
+
+.text-muted   { color: #8ba5c4 !important; }
+.text-primary { color: #3aabff !important; }
+.text-success { color: #2ecc71 !important; }
+.text-danger  { color: #e74c3c !important; }
+.text-warning { color: #f5b942 !important; }
+.text-white   { color: #ffffff !important; }
+.fw-bold, .fw-semibold { color: #ffffff !important; }
+
+/* ── CARDS ───────────────────────────────────────────── */
+.card {
+  background: #0f2035 !important;
+  border: 0.5px solid rgba(255,255,255,0.09) !important;
+  color: #e8f0fa !important;
+}
+
+.card:hover {
+  border-color: rgba(58,171,255,0.22) !important;
+  transition: border-color 0.2s;
+}
+
+.card-body  { color: #e8f0fa !important; }
+
+.card-header {
+  background: rgba(255,255,255,0.04) !important;
+  border-bottom: 0.5px solid rgba(255,255,255,0.08) !important;
+  color: #ffffff !important;
+}
+
+.card-footer {
+  background: rgba(255,255,255,0.03) !important;
+  border-top: 0.5px solid rgba(255,255,255,0.07) !important;
+  color: #8ba5c4 !important;
+}
+
+/* Stat cards use bg-light */
+.bg-light {
+  background: rgba(255,255,255,0.05) !important;
+}
+
+.shadow-sm {
+  box-shadow: 0 2px 16px rgba(0,0,0,0.4) !important;
+}
+
+/* ── TABLES ──────────────────────────────────────────── */
+.table {
+  color: #d0dff0 !important;
+  border-color: rgba(255,255,255,0.07) !important;
+}
+
+.table thead th {
+  background: rgba(255,255,255,0.05) !important;
+  color: #8ba5c4 !important;
+  border-color: rgba(255,255,255,0.08) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+}
+
+.table tbody tr { border-color: rgba(255,255,255,0.05) !important; }
+.table tbody tr:hover { background: rgba(58,171,255,0.06) !important; }
+.table tbody td {
+  color: #d0dff0 !important;
+  border-color: rgba(255,255,255,0.05) !important;
+  vertical-align: middle !important;
+}
+
+.table-striped > tbody > tr:nth-of-type(odd) > * {
+  background: rgba(255,255,255,0.025) !important;
+  color: #d0dff0 !important;
+}
+
+/* ── FORMS & INPUTS ──────────────────────────────────── */
+.form-control,
+.form-select,
+textarea.form-control {
+  background: rgba(255,255,255,0.07) !important;
+  border: 0.5px solid rgba(255,255,255,0.15) !important;
+  color: #e8f0fa !important;
+  font-family: 'DM Sans', sans-serif !important;
+  font-size: 14px !important;
+}
+
+.form-control:focus,
+.form-select:focus,
+textarea.form-control:focus {
+  background: rgba(255,255,255,0.1) !important;
+  border-color: rgba(58,171,255,0.6) !important;
+  box-shadow: 0 0 0 3px rgba(58,171,255,0.15) !important;
+  color: #ffffff !important;
+}
+
+.form-control::placeholder { color: #4d6a80 !important; }
+
+.form-control:disabled,
+.form-select:disabled {
+  background: rgba(255,255,255,0.03) !important;
+  color: #4d6a80 !important;
+}
+
+.input-group-text {
+  background: rgba(255,255,255,0.07) !important;
+  border-color: rgba(255,255,255,0.15) !important;
+  color: #8ba5c4 !important;
+}
+
+/* Dash dcc.Input */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="search"] {
+  background: rgba(255,255,255,0.07) !important;
+  border: 0.5px solid rgba(255,255,255,0.15) !important;
+  color: #e8f0fa !important;
+  border-radius: 6px !important;
+  padding: 8px 12px !important;
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus {
+  border-color: rgba(58,171,255,0.6) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 3px rgba(58,171,255,0.15) !important;
+  color: #ffffff !important;
+}
+
+/* Toggle / checkbox */
+.form-check-input {
+  background-color: rgba(255,255,255,0.1) !important;
+  border-color: rgba(255,255,255,0.25) !important;
+}
+
+.form-check-input:checked {
+  background-color: #1a6fc4 !important;
+  border-color: #1a6fc4 !important;
+}
+
+.form-check-label { color: #d0dff0 !important; }
+
+/* ── BUTTONS ─────────────────────────────────────────── */
+.btn {
+  font-family: 'DM Sans', sans-serif !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  border-radius: 6px !important;
+}
+
+.btn-primary {
+  background: #1a6fc4 !important;
+  border-color: #1a6fc4 !important;
+  color: #fff !important;
+}
+.btn-primary:hover { background: #2f8de8 !important; border-color: #2f8de8 !important; }
+
+.btn-secondary {
+  background: rgba(255,255,255,0.08) !important;
+  border-color: rgba(255,255,255,0.15) !important;
+  color: #d0dff0 !important;
+}
+.btn-secondary:hover { background: rgba(255,255,255,0.14) !important; color: #fff !important; }
+
+.btn-success {
+  background: #1a8a4a !important;
+  border-color: #1a8a4a !important;
+  color: #fff !important;
+}
+.btn-danger  {
+  background: #a32d2d !important;
+  border-color: #a32d2d !important;
+  color: #fff !important;
+}
+.btn-warning {
+  background: #b8740a !important;
+  border-color: #b8740a !important;
+  color: #fff !important;
+}
+
+.btn-outline-primary {
+  border-color: rgba(58,171,255,0.5) !important;
+  color: #3aabff !important;
+  background: transparent !important;
+}
+.btn-outline-primary:hover {
+  background: rgba(58,171,255,0.12) !important;
+  color: #3aabff !important;
+}
+
+.btn-outline-secondary {
+  border-color: rgba(255,255,255,0.2) !important;
+  color: #8ba5c4 !important;
+  background: transparent !important;
+}
+.btn-outline-secondary:hover {
+  background: rgba(255,255,255,0.07) !important;
+  color: #fff !important;
+}
+
+/* ── BADGES ──────────────────────────────────────────── */
+.badge {
+  font-family: 'DM Sans', sans-serif !important;
+  font-weight: 500 !important;
+}
+
+.badge.bg-primary   { background: rgba(26,111,196,0.3)  !important; color: #3aabff   !important; }
+.badge.bg-success   { background: rgba(26,138,74,0.3)   !important; color: #2ecc71   !important; }
+.badge.bg-danger    { background: rgba(163,45,45,0.3)   !important; color: #f07070   !important; }
+.badge.bg-warning   { background: rgba(184,116,10,0.3)  !important; color: #f5b942   !important; }
+.badge.bg-secondary { background: rgba(255,255,255,0.1) !important; color: #d0dff0   !important; }
+.badge.bg-info      { background: rgba(58,171,255,0.2)  !important; color: #3aabff   !important; }
+.badge.bg-light     { background: rgba(255,255,255,0.1) !important; color: #d0dff0   !important; }
+
+/* ── ALERTS ──────────────────────────────────────────── */
+.alert {
+  border: 0.5px solid !important;
+  font-size: 14px !important;
+  border-radius: 8px !important;
+}
+
+.alert-success {
+  background: rgba(26,138,74,0.15)  !important;
+  border-color: rgba(26,138,74,0.4) !important;
+  color: #5ddb96 !important;
+}
+.alert-danger {
+  background: rgba(163,45,45,0.15)  !important;
+  border-color: rgba(163,45,45,0.4) !important;
+  color: #f07070 !important;
+}
+.alert-warning {
+  background: rgba(184,116,10,0.15) !important;
+  border-color: rgba(184,116,10,0.4) !important;
+  color: #f5b942 !important;
+}
+.alert-info {
+  background: rgba(26,111,196,0.15) !important;
+  border-color: rgba(26,111,196,0.4) !important;
+  color: #3aabff !important;
+}
+
+/* Make sure text inside alerts inherits the alert color */
+.alert p, .alert span, .alert li, .alert strong, .alert b {
+  color: inherit !important;
+}
+
+/* ── TABS ────────────────────────────────────────────── */
+.nav-tabs {
+  border-bottom: 0.5px solid rgba(255,255,255,0.1) !important;
+}
+.nav-tabs .nav-link {
+  color: #8ba5c4 !important;
+  border-color: transparent !important;
+  font-size: 14px !important;
+  background: transparent !important;
+}
+.nav-tabs .nav-link.active {
+  background: #0f2035 !important;
+  border-color: rgba(255,255,255,0.1) rgba(255,255,255,0.1) #0f2035 !important;
+  color: #ffffff !important;
+}
+.nav-tabs .nav-link:hover {
+  color: #fff !important;
+  border-color: transparent !important;
+  background: rgba(255,255,255,0.04) !important;
+}
+
+/* ── DIVIDERS ────────────────────────────────────────── */
+hr {
+  border-color: rgba(255,255,255,0.07) !important;
+  opacity: 1 !important;
+}
+
+/* ── DROPDOWNS ───────────────────────────────────────── */
+.dropdown-menu {
+  background: #0f2035 !important;
+  border: 0.5px solid rgba(255,255,255,0.1) !important;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5) !important;
+}
+.dropdown-item { color: #d0dff0 !important; font-size: 14px !important; }
+.dropdown-item:hover { background: rgba(58,171,255,0.1) !important; color: #fff !important; }
+.dropdown-divider { border-color: rgba(255,255,255,0.07) !important; }
+
+/* ── PLOTLY CHARTS — keep labels & grids readable ────── */
+
+/* Transparent chart background so card bg shows through */
+.js-plotly-plot .plotly .main-svg { background: transparent !important; }
+.js-plotly-plot .plotly .bg { fill: transparent !important; }
+
+/* Axis tick labels */
+.js-plotly-plot .xtick text,
+.js-plotly-plot .ytick text { fill: #8ba5c4 !important; font-size: 12px !important; }
+
+/* Axis titles */
+.js-plotly-plot .g-xtitle text,
+.js-plotly-plot .g-ytitle text { fill: #8ba5c4 !important; }
+
+/* Chart title */
+.js-plotly-plot .gtitle { fill: #ffffff !important; font-size: 15px !important; }
+
+/* Legend text */
+.js-plotly-plot .legendtext { fill: #d0dff0 !important; }
+.js-plotly-plot .legend .bg { fill: rgba(15,32,53,0.85) !important; stroke: rgba(255,255,255,0.1) !important; }
+
+/* Grid lines */
+.js-plotly-plot .gridlayer path { stroke: rgba(255,255,255,0.07) !important; }
+
+/* Zero lines */
+.js-plotly-plot .zerolinelayer path { stroke: rgba(255,255,255,0.15) !important; }
+
+/* Axis lines */
+.js-plotly-plot .crisp path.domain { stroke: rgba(255,255,255,0.12) !important; }
+
+/* Hover tooltip */
+.js-plotly-plot .hoverlayer .hovertext rect { fill: #0f2035 !important; stroke: rgba(255,255,255,0.15) !important; }
+.js-plotly-plot .hoverlayer .hovertext text { fill: #e8f0fa !important; }
+
+/* Modebar (download/zoom buttons) */
+.js-plotly-plot .modebar { background: transparent !important; }
+.js-plotly-plot .modebar-btn path { fill: #4d6a80 !important; }
+.js-plotly-plot .modebar-btn:hover path { fill: #fff !important; }
+
+/* ── DASH LOADING ─────────────────────────────────────── */
+._dash-loading { color: #3aabff !important; }
+
+/* ── SCROLLBARS ──────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+/* ── CONTAINER PADDING ───────────────────────────────── */
+.container-fluid { padding-top: 1.5rem; }
+
+/* ── CHAT BUBBLES (chat.py) ──────────────────────────── */
+.chat-bubble-user {
+  background: rgba(26,111,196,0.2) !important;
+  border: 0.5px solid rgba(26,111,196,0.35) !important;
+  color: #e8f0fa !important;
+  border-radius: 12px 12px 2px 12px !important;
+  padding: 10px 14px !important;
+  font-size: 14px !important;
+}
+
+.chat-bubble-assistant {
+  background: rgba(255,255,255,0.05) !important;
+  border: 0.5px solid rgba(255,255,255,0.09) !important;
+  color: #d0dff0 !important;
+  border-radius: 12px 12px 12px 2px !important;
+  padding: 10px 14px !important;
+  font-size: 14px !important;
+  line-height: 1.6 !important;
+}
+
+/* ── LOW STOCK ROW HIGHLIGHT (inventory.py) ──────────── */
+.low-stock-row td { color: #f07070 !important; }
+
+/* ── DEMO FOOTER DISCLAIMER ──────────────────────────── */
+.demo-disclaimer {
+  font-size: 12px !important;
+  color: #4d6a80 !important;
+}
