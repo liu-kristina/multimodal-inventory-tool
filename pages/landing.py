@@ -229,7 +229,7 @@ layout = html.Div([
                         html.Img(src="/assets/easylearningai.png",
                                  style={"height": "22px", "width": "auto", "verticalAlign": "middle",
                                         "opacity": "0.85", "filter": "brightness(1.4)"}),
-                        href="https://easylearningai.com",
+                        href="https://easylearning.ai",
                         target="_blank",
                         title="Easy Learning AI",
                         style={"display": "inline-flex", "alignItems": "center"},
