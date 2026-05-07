@@ -338,8 +338,8 @@ LOGO_PATH = "/assets/hermes_logo.png"   # put the logo PNG in your /assets/ fold
 
 layout = html.Div([
 
-    # Inject styles
-    html.Style(STYLES),
+    # Inject styles (html.Style doesn't exist in Dash — use script tag via dangerouslySetInnerHTML)
+    html.Div(dangerouslySetInnerHTML={"__html": f"<style>{STYLES}</style>"}),
 
     html.Div(className="hermes-landing", children=[
 
