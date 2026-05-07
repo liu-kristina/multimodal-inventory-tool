@@ -94,14 +94,31 @@ layout = html.Div([
                     html.P("About us", className="h-section-label"),
                     html.H2("Built for raw material procurement teams", className="h-section-title"),
                     html.P(
-                        "Hermes AI Procurement was built to solve a real problem: procurement teams "
-                        "in nutraceuticals, pharma, and specialty chemicals spend countless hours "
-                        "manually processing supplier invoices, chasing lead times, and managing "
-                        "reorder decisions from spreadsheets. "
-                        "We built an AI-native platform that handles all of it — from PDF extraction "
-                        "to natural-language Q&A over your entire invoice history.",
+                        "Raw material distributors in nutraceuticals operate on speed and precision. "
+                        "High invoice volumes, fragmented supplier data, and disconnected inventory "
+                        "systems create daily friction that directly threatens margins and fulfillment.",
+                        className="h-section-body",
+                        style={"marginBottom": "16px"},
+                    ),
+                    html.P(
+                        "The core challenges: matching the right suppliers to customer demand fast "
+                        "enough to close sales, maintaining a single source of truth for inventory, "
+                        "and managing heavy paperwork without sacrificing accuracy. "
+                        "When these break down, so does profitability.",
                         className="h-section-body",
                     ),
+                    html.Div(style={"marginTop": "24px"}, children=[
+                        html.P("Example customer", style={"fontSize": "11px", "fontWeight": "500",
+                               "letterSpacing": "1px", "textTransform": "uppercase",
+                               "color": "#3aabff", "marginBottom": "8px"}),
+                        html.P(
+                            "California Nutraceuticals — a family-owned importer of collagen and cartilage "
+                            "ingredients from China, selling to supplement brands across the US. "
+                            "5–20 employees. All companies shown are fictional and for demo purposes only.",
+                            style={"fontSize": "13px", "color": "#8ba5c4",
+                                   "lineHeight": "1.6", "fontStyle": "italic"},
+                        ),
+                    ]),
                 ]),
 
                 html.Div(className="h-cards", children=[
@@ -113,7 +130,7 @@ layout = html.Div([
                     html.Div(className="h-card", children=[
                         html.Div("📄", className="h-card-icon"),
                         html.H4("PDF Intelligence"),
-                        html.P("Upload any supplier or customer invoice — Hermes extracts entities and indexes it automatically."),
+                        html.P("Supplier and customer invoices are automatically extracted, indexed, and made searchable."),
                     ]),
                     html.Div(className="h-card", children=[
                         html.Div("📦", className="h-card-icon"),
@@ -122,8 +139,8 @@ layout = html.Div([
                     ]),
                     html.Div(className="h-card", children=[
                         html.Div("✉️", className="h-card-icon"),
-                        html.H4("Reorder Drafts"),
-                        html.P("Generate professional supplier reorder emails from a single command."),
+                        html.H4("Email-Native Agent"),
+                        html.P("The procurement agent drafts and sends reorder emails directly — approvals happen in your inbox."),
                     ]),
                 ]),
             ]),
@@ -161,17 +178,17 @@ layout = html.Div([
                     ]),
                     html.Div(className="h-step", children=[
                         html.Div("03", className="h-step-bg"),
-                        html.Div("📤", className="h-step-icon"),
-                        html.H3("Invoice Upload"),
-                        html.P("Drop in any PDF. The agent extracts supplier, product, price, and "
-                               "shipping data — and adds it to your searchable knowledge base instantly."),
+                        html.Div("✉️", className="h-step-icon"),
+                        html.H3("Email-Native Procurement Agent"),
+                        html.P("The agent monitors low stock, drafts supplier reorder emails, and sends "
+                               "them directly. Your team approves or rejects from their inbox — no portal needed."),
                     ]),
                     html.Div(className="h-step", children=[
                         html.Div("04", className="h-step-bg"),
                         html.Div("🤖", className="h-step-icon"),
                         html.H3("Agent Control"),
-                        html.P("Toggle automation on/off, approve pending reorder drafts, run "
-                               "procurement commands, and review the full action history."),
+                        html.P("Review pending drafts, track approval history, monitor agent activity, "
+                               "and run procurement commands from a central dashboard."),
                     ]),
                 ]),
             ]),
@@ -248,3 +265,4 @@ layout = html.Div([
 
     ]),
 ], style={"margin": "0", "padding": "0"})
+
