@@ -454,3 +454,10 @@ hr {
   font-size: 12px !important;
   color: #4d6a80 !important;
 }
+
+/* ── SUPPLIER SCORECARD — force dark row backgrounds ─── */
+.scorecard-table,
+.scorecard-table td,
+.scorecard-table th {
+  background-color: transparent !important;
+}
