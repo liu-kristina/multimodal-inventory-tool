@@ -173,7 +173,7 @@ def _process_quote_reply(r: dict, mark_done_fn) -> None:
                 print(f"[APPROVAL DRAFT] id={result['approval_draft_id']} for {product_name}")
                 if result["send_result"]:
                     print(f"[APPROVAL SENT] {result['send_result']}")
-                from slack_notifier import send_approval_reminder
+                from agents.slack_notifier import send_approval_reminder
                 send_approval_reminder(product_name, result["supplier"], result["approval_draft_id"])
     else:
         print(f"[SKIP] run_id={r['run_id']} draft not found or action INVALID")
@@ -344,7 +344,7 @@ def _process_approval_reply(r: dict, mark_done_fn) -> None:
                 print(f"[APPROVAL DRAFT] id={result['approval_draft_id']} for {product_name} (new quote)")
                 if result["send_result"]:
                     print(f"[APPROVAL SENT] {result['send_result']}")
-                from slack_notifier import send_approval_reminder
+                from agents.slack_notifier import send_approval_reminder
                 send_approval_reminder(product_name, result["supplier"], result["approval_draft_id"])
         else:
             print(f"[APPROVAL] unrecognized action '{action}' for {product_name} — no status update")
@@ -997,13 +997,13 @@ DEMO_RUN_ID = "demo0001"   # fixed run_id used in demo-seed and demo instruction
 
 def cmd_slack_agent(args):
     """Start the Hermes Slack bot using Socket Mode."""
-    from slack_agent import start_slack_agent
+    from agents.slack_agent import start_slack_agent
     start_slack_agent()
 
 
 def cmd_slack_notify_test(args):
     """Send a sample procurement approval reminder to SLACK_APPROVAL_CHANNEL."""
-    from slack_notifier import send_approval_reminder
+    from agents.slack_notifier import send_approval_reminder
     print("[SLACK NOTIFY TEST] Sending sample approval reminder to SLACK_APPROVAL_CHANNEL...")
     send_approval_reminder(
         product_name="Collagen Powder (test)",
