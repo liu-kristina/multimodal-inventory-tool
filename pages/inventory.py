@@ -129,20 +129,23 @@ def make_chart():
         orientation="h",
         marker_color=colors,
         text=[f"{s} kg" for s in stocks],
-        textposition="outside",
+        textposition="auto",
     ))
 
     fig.update_layout(
-        margin=dict(l=0, r=60, t=10, b=10),
+        margin=dict(l=0, r=120, t=10, b=40),
         height=420,
         xaxis_title="Stock (kg)",
+        xaxis=dict(autorange=True),
         yaxis=dict(autorange="reversed"),
-        plot_bgcolor="white",
-        paper_bgcolor="white",
+        plot_bgcolor="#0f2035",
+        paper_bgcolor="#0f2035",
         showlegend=False,
-        font=dict(size=12),
+        font=dict(size=12, color="#8ba5c4"),
     )
-    fig.update_xaxes(showgrid=True, gridcolor="#f0f0f0")
+    fig.update_xaxes(showgrid=True, gridcolor="rgba(255,255,255,0.07)",
+                     tickfont=dict(color="#8ba5c4"))
+    fig.update_yaxes(tickfont=dict(color="#d0dff0"))
     return fig
 
 

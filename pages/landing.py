@@ -92,33 +92,21 @@ layout = html.Div([
 
                 html.Div(children=[
                     html.P("About us", className="h-section-label"),
-                    html.H2("Built for raw material procurement teams", className="h-section-title"),
+                    html.H2("Procurement on autopilot", className="h-section-title"),
                     html.P(
-                        "Raw material distributors in nutraceuticals operate on speed and precision. "
-                        "High invoice volumes, fragmented supplier data, and disconnected inventory "
-                        "systems create daily friction that directly threatens margins and fulfillment.",
+                        "Procurement teams spend too much time on manual work — chasing invoices, "
+                        "copying data between systems, and drafting the same supplier emails over and over. "
+                        "Hermes eliminates that busywork so your team can focus on decisions, not admin.",
                         className="h-section-body",
                         style={"marginBottom": "16px"},
                     ),
                     html.P(
-                        "The core challenges: matching the right suppliers to customer demand fast "
-                        "enough to close sales, maintaining a single source of truth for inventory, "
-                        "and managing heavy paperwork without sacrificing accuracy. "
-                        "When these break down, so does profitability.",
+                        "From the moment an invoice lands to the moment a reorder is sent, "
+                        "Hermes automates the entire flow: extracting data from PDFs, keeping inventory "
+                        "current, flagging what needs attention, and sending supplier emails for approval — "
+                        "approve or reject directly from your inbox or Slack, without touching the platform.",
                         className="h-section-body",
                     ),
-                    html.Div(style={"marginTop": "24px"}, children=[
-                        html.P("Example customer", style={"fontSize": "11px", "fontWeight": "500",
-                               "letterSpacing": "1px", "textTransform": "uppercase",
-                               "color": "#3aabff", "marginBottom": "8px"}),
-                        html.P(
-                            "California Nutraceuticals — a family-owned importer of collagen and cartilage "
-                            "ingredients from China, selling to supplement brands across the US. "
-                            "5–20 employees. All companies shown are fictional and for demo purposes only.",
-                            style={"fontSize": "13px", "color": "#8ba5c4",
-                                   "lineHeight": "1.6", "fontStyle": "italic"},
-                        ),
-                    ]),
                 ]),
 
                 html.Div(className="h-cards", children=[
@@ -139,8 +127,8 @@ layout = html.Div([
                     ]),
                     html.Div(className="h-card", children=[
                         html.Div("✉️", className="h-card-icon"),
-                        html.H4("Email-Native Agent"),
-                        html.P("The procurement agent drafts and sends reorder emails directly — approvals happen in your inbox."),
+                        html.H4("Email & Slack Native"),
+                        html.P("The procurement agent sends reorder emails and Slack notifications — approve or reject without ever opening the app."),
                     ]),
                 ]),
             ]),
@@ -166,22 +154,21 @@ layout = html.Div([
                         html.Div("01", className="h-step-bg"),
                         html.Div("💬", className="h-step-icon"),
                         html.H3("Invoice Chat"),
-                        html.P("Ask plain-English questions about your supplier history, pricing trends, "
-                               "and lead times. Powered by RAG over your full invoice database."),
+                        html.P("Ask questions about your supplier history, pricing trends, "
+                               "and lead times."),
                     ]),
                     html.Div(className="h-step", children=[
                         html.Div("02", className="h-step-bg"),
                         html.Div("📊", className="h-step-icon"),
                         html.H3("Inventory Dashboard"),
-                        html.P("Live stock levels across all SKUs. Color-coded low-stock alerts and "
-                               "one-click manual updates keep your data accurate."),
+                        html.P("Live stock levels across all products. Color-coded with low-stock alerts."),
                     ]),
                     html.Div(className="h-step", children=[
                         html.Div("03", className="h-step-bg"),
                         html.Div("✉️", className="h-step-icon"),
-                        html.H3("Email-Native Procurement Agent"),
+                        html.H3("Email & Slack Native Agent"),
                         html.P("The agent monitors low stock, drafts supplier reorder emails, and sends "
-                               "them directly. Your team approves or rejects from their inbox — no portal needed."),
+                               "them directly. Your team approves or rejects from their inbox or from Slack."),
                     ]),
                     html.Div(className="h-step", children=[
                         html.Div("04", className="h-step-bg"),
@@ -202,8 +189,7 @@ layout = html.Div([
                     html.H2("Explore the live demo", className="h-section-title"),
                     html.P(
                         "Walk through a fully functional demo built around California Nutraceuticals — "
-                        "a fictional raw material distributor with real invoice data, live inventory, "
-                        "and a working AI chat interface.",
+                        "a fictional raw material distributor.",
                         className="h-section-body",
                     ),
                     html.P("No login required · For illustrative purposes only", className="h-demo-note"),
