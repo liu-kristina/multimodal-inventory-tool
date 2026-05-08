@@ -29,3 +29,9 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Claude Code project memory / settings (local only)
+.claude/
+
+# Runtime logs (generated, not source-controlled)
+logs/

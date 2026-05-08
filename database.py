@@ -227,6 +227,18 @@ def init_db():
                 UNIQUE(product_name, supplier)
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS procurement_memory_notes (
+                id           SERIAL PRIMARY KEY,
+                supplier     TEXT NOT NULL,
+                product_name TEXT NOT NULL,
+                event_type   TEXT NOT NULL,
+                note         TEXT NOT NULL,
+                impact       TEXT,
+                embedding    TEXT,
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
     else:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS stock (
@@ -366,6 +378,18 @@ def init_db():
                 supplier_email TEXT,
                 priority       INTEGER DEFAULT 1,
                 UNIQUE(product_name, supplier)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS procurement_memory_notes (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                supplier     TEXT NOT NULL,
+                product_name TEXT NOT NULL,
+                event_type   TEXT NOT NULL,
+                note         TEXT NOT NULL,
+                impact       TEXT,
+                embedding    TEXT,
+                created_at   TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
 

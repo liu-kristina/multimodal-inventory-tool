@@ -173,6 +173,8 @@ def _process_quote_reply(r: dict, mark_done_fn) -> None:
                 print(f"[APPROVAL DRAFT] id={result['approval_draft_id']} for {product_name}")
                 if result["send_result"]:
                     print(f"[APPROVAL SENT] {result['send_result']}")
+                from slack_notifier import send_approval_reminder
+                send_approval_reminder(product_name, result["supplier"], result["approval_draft_id"])
     else:
         print(f"[SKIP] run_id={r['run_id']} draft not found or action INVALID")
 
@@ -342,6 +344,8 @@ def _process_approval_reply(r: dict, mark_done_fn) -> None:
                 print(f"[APPROVAL DRAFT] id={result['approval_draft_id']} for {product_name} (new quote)")
                 if result["send_result"]:
                     print(f"[APPROVAL SENT] {result['send_result']}")
+                from slack_notifier import send_approval_reminder
+                send_approval_reminder(product_name, result["supplier"], result["approval_draft_id"])
         else:
             print(f"[APPROVAL] unrecognized action '{action}' for {product_name} — no status update")
     else:
@@ -991,6 +995,24 @@ def cmd_run_procurement(args):
 DEMO_RUN_ID = "demo0001"   # fixed run_id used in demo-seed and demo instructions
 
 
+def cmd_slack_agent(args):
+    """Start the Hermes Slack bot using Socket Mode."""
+    from slack_agent import start_slack_agent
+    start_slack_agent()
+
+
+def cmd_slack_notify_test(args):
+    """Send a sample procurement approval reminder to SLACK_APPROVAL_CHANNEL."""
+    from slack_notifier import send_approval_reminder
+    print("[SLACK NOTIFY TEST] Sending sample approval reminder to SLACK_APPROVAL_CHANNEL...")
+    send_approval_reminder(
+        product_name="Collagen Powder (test)",
+        supplier="Pacific Rim BioMaterials Co. (test)",
+        run_id="test-run-001",
+    )
+    print("[SLACK NOTIFY TEST] Done.")
+
+
 def cmd_inventory_status(args):
     """Print current inventory stock levels."""
     from database import get_connection, _execute
@@ -1493,6 +1515,12 @@ def cmd_demo_seed(args):
         run_id="demo_seed_shanghai_fcp",
     )
 
+    # --- Demo procurement memory notes ---
+    # Narrative notes about past supplier events; embedding-indexed for retrieval.
+    # create_memory_note() skips duplicates, so re-running demo-seed is safe.
+    print("[DEMO] Seeding procurement memory notes...")
+    _seed_demo_memory_notes()
+
     print("[DEMO] Generating demo PDFs...")
     try:
         import sys, os
@@ -1507,6 +1535,62 @@ def cmd_demo_seed(args):
     print("\n[DEMO] Current inventory after seed:")
     cmd_inventory_status(args)
     _print_demo_instructions()
+
+
+_DEMO_MEMORY_NOTES = [
+    {
+        "supplier":     "Pacific Rim BioMaterials Co.",
+        "product_name": "Collagen Peptides Type I",
+        "event_type":   "DELIVERY_DELAY",
+        "note":         "Delivery delayed by 10 days due to customs clearance issue.",
+        "impact":       "negative",
+    },
+    {
+        "supplier":     "Jiaxing Natural Products Ltd",
+        "product_name": "Chondroitin Sulfate",
+        "event_type":   "ON_TIME_DELIVERY",
+        "note":         "Delivered on time during previous urgent reorder; responsive supplier.",
+        "impact":       "positive",
+    },
+    {
+        "supplier":     "Shanghai BioSupply International",
+        "product_name": "Fish Collagen Peptides",
+        "event_type":   "QUOTE_ISSUE",
+        "note":         "Previous quote missing quote validity and pricing terms; required follow-up.",
+        "impact":       "negative",
+    },
+    {
+        "supplier":     "Pacific Rim BioMaterials Co.",
+        "product_name": "Collagen Powder",
+        "event_type":   "LEAD_TIME_ISSUE",
+        "note":         "Repeated lead-time overruns on collagen products; actual delivery 7-14 days later than quoted.",
+        "impact":       "negative",
+    },
+    {
+        "supplier":     "CarbonSupply Inc",
+        "product_name": "Graphite Anode",
+        "event_type":   "STABLE_DELIVERY",
+        "note":         "Consistent on-time delivery across all Graphite Anode orders; reliable partner.",
+        "impact":       "positive",
+    },
+]
+
+
+def _seed_demo_memory_notes():
+    """Insert demo procurement_memory_notes rows, skipping duplicates."""
+    try:
+        from procurement_memory_embedding import create_memory_note
+    except ImportError:
+        print("[DEMO] WARNING: procurement_memory_embedding not available; skipping memory notes.")
+        return
+    inserted = 0
+    for note in _DEMO_MEMORY_NOTES:
+        try:
+            if create_memory_note(**note):
+                inserted += 1
+        except Exception as exc:
+            print(f"[DEMO] WARNING: could not seed memory note ({note['event_type']}): {exc}")
+    print(f"[DEMO] Memory notes: {inserted} new, {len(_DEMO_MEMORY_NOTES) - inserted} already present.")
 
 
 def cmd_strategy_test(args):
@@ -3288,6 +3372,12 @@ def build_parser():
         help="End-to-end business demo story: CUST-DEMO-001 -> Collagen Powder approve + FCP reject paths",
     )
 
+    # slack-agent
+    sub.add_parser("slack-agent", help="Start Hermes Slack bot using Socket Mode")
+
+    # slack-notify-test
+    sub.add_parser("slack-notify-test", help="Send a sample approval reminder to SLACK_APPROVAL_CHANNEL")
+
     # dedup-test
     sub.add_parser(
         "dedup-test",
@@ -3325,6 +3415,8 @@ def main():
         "email-loop-test":         cmd_email_loop_test,
         "business-demo-test":      cmd_business_demo_test,
         "dedup-test":              cmd_dedup_test,
+        "slack-agent":             cmd_slack_agent,
+        "slack-notify-test":       cmd_slack_notify_test,
     }
 
     if args.command in dispatch:

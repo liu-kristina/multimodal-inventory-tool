@@ -21,3 +21,9 @@ Faker==40.13.0
 psycopg2-binary==2.9.9
 pdfplumber
 pycryptodome
+
+# Slack integration (optional)
+slack-bolt
+
+# Embedding retrieval for procurement memory (optional — requires OPENAI_API_KEY)
+openai

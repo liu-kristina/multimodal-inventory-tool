@@ -112,6 +112,60 @@ railway run python pipeline/generate_embeddings.py --rebuild
 
 ---
 
+## Slack Agent (Optional Demo Interaction Layer)
+
+A lightweight Slack bot that reads the same database as the CLI, Gmail workflow, and Dash UI — no duplicate logic, no separate database.
+
+**Setup:**
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) and create a new Slack app.
+2. Under **Settings → Socket Mode**, enable Socket Mode.
+3. Under **Settings → Basic Information → App-Level Tokens**, create a token with the `connections:write` scope. Copy the `xapp-...` token.
+4. Under **Features → OAuth & Permissions**, add these bot token scopes:
+   - `app_mentions:read`
+   - `chat:write`
+5. Install the app to your workspace and copy the `xoxb-...` bot token.
+6. Set environment variables:
+   ```
+   SLACK_BOT_TOKEN=xoxb-...
+   SLACK_APP_TOKEN=xapp-...
+   ```
+7. Run:
+   ```bash
+   python cli.py slack-agent
+   ```
+8. In Slack, mention the bot:
+   ```
+   @Hermes help
+   @Hermes inventory
+   @Hermes low stock
+   @Hermes procurement
+   @Hermes memory
+   @Hermes demo seed
+   ```
+
+### Procurement Approval Reminders (Optional)
+
+When a procurement approval email is created, Hermes can post a one-way reminder to a Slack channel. **Email remains the approval source of truth** — the Slack message is informational only and does not accept replies or buttons.
+
+Set one additional environment variable:
+
+```
+SLACK_APPROVAL_CHANNEL=C0ABC1234    # Slack channel ID (not channel name)
+```
+
+If `SLACK_APPROVAL_CHANNEL` is not set, the reminder is silently skipped and the procurement workflow continues normally.
+
+To verify the setup:
+
+```bash
+python cli.py slack-notify-test
+```
+
+This sends a sample reminder to `SLACK_APPROVAL_CHANNEL` without touching the database.
+
+---
+
 ## Team
 
 Built by Ying Huang, Kristina Liang, and Moxi Liang as the capstone project for the NLP and GenAI program at [Easy Learning AI](https://easylearning.ai).
