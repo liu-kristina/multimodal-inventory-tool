@@ -624,6 +624,35 @@ def layout():
 
         ], className="g-2"),
 
+        # ── Slack demo video ──
+        dbc.Card(dbc.CardBody([
+            html.P("See it in action", className="h-section-label",
+                   style={"fontSize": "11px", "fontWeight": "500", "letterSpacing": "1.5px",
+                          "textTransform": "uppercase", "color": "#3aabff", "marginBottom": "6px"}),
+            html.P("Slack-native approval flow", className="fw-semibold mb-1",
+                   style={"fontSize": "15px", "color": "#ffffff"}),
+            html.P(
+                "When stock drops below the reorder threshold, Hermes drafts a supplier email and "
+                "posts an approval request directly in Slack. Your team approves or rejects with a "
+                "single click — no portal, no context switching.",
+                className="text-muted mb-3",
+                style={"fontSize": "13px", "lineHeight": "1.6"},
+            ),
+            html.Video(
+                src="/assets/slack.mp4",
+                controls=True,
+                autoPlay=False,
+                loop=True,
+                muted=True,
+                style={
+                    "width": "100%",
+                    "borderRadius": "8px",
+                    "border": "0.5px solid rgba(255,255,255,0.1)",
+                    "backgroundColor": "#0a1625",
+                },
+            ),
+        ]), className="mb-3"),
+
         # ── Supplier scorecard ──
         dbc.Card(dbc.CardBody([
             html.P("Supplier scorecard", className="fw-semibold mb-3", style={"fontSize": "13px"}),
@@ -990,3 +1019,4 @@ def resolve_flag(n_clicks):
 )
 def refresh_approval_history(n):
     return _render_approval_history(get_approval_history())
+
