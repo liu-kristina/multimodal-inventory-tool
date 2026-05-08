@@ -24,6 +24,9 @@ _use_postgres = bool(DATABASE_URL)
 if _use_postgres:
     import psycopg2
     import psycopg2.extras
+    print(f"[DB] Using PostgreSQL via DATABASE_URL")
+else:
+    print(f"[DB] Using SQLite: {DB_PATH}")
 
 
 # ── Connection ─────────────────────────────────────────────────────────────────
@@ -39,11 +42,18 @@ def get_connection():
 
 
 def _execute(conn, sql: str, params=None):
-    """Execute a statement — handles both Postgres (%s) and SQLite (?) placeholders."""
+    """Execute a statement — handles both Postgres (%s) and SQLite (?) placeholders.
+
+    When params is None, execute() is called without arguments so psycopg2 does
+    not attempt to interpret % characters in the SQL (e.g. LIKE 'ELT%' patterns).
+    """
     if _use_postgres:
         sql = sql.replace("?", "%s")
     cur = conn.cursor()
-    cur.execute(sql, params or [])
+    if params is None:
+        cur.execute(sql)
+    else:
+        cur.execute(sql, params)
     return cur
 
 
@@ -53,6 +63,22 @@ def _executemany(conn, sql: str, params_list):
     cur = conn.cursor()
     cur.executemany(sql, params_list)
     return cur
+
+
+def _insert_id(conn, sql: str, params) -> int:
+    """Execute an INSERT and return the new row id for both Postgres and SQLite.
+
+    Postgres does not populate cursor.lastrowid; use RETURNING id instead.
+    """
+    if _use_postgres:
+        sql = sql.replace("?", "%s")
+        cur = conn.cursor()
+        cur.execute(sql + " RETURNING id", params)
+        return cur.fetchone()["id"]
+    else:
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        return cur.lastrowid
 
 
 # ── Schema ─────────────────────────────────────────────────────────────────────
@@ -156,6 +182,7 @@ def init_db():
                 urgency             TEXT,
                 reason              TEXT,
                 status              TEXT DEFAULT 'pending_approval',
+                parent_rec_id       INTEGER,
                 created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -309,6 +336,7 @@ def init_db():
                 urgency             TEXT,
                 reason              TEXT,
                 status              TEXT DEFAULT 'pending_approval',
+                parent_rec_id       INTEGER,
                 created_at          TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at          TEXT DEFAULT CURRENT_TIMESTAMP
             )
@@ -381,6 +409,31 @@ def init_db():
             )
         """)
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_state (
+                id          INTEGER PRIMARY KEY,
+                active      INTEGER DEFAULT 0,
+                last_run    TEXT,
+                last_status TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_log (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                message    TEXT,
+                status     TEXT DEFAULT 'ok',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_flags (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                reason     TEXT,
+                details    TEXT,
+                resolved   INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS procurement_memory_notes (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 supplier     TEXT NOT NULL,
@@ -393,29 +446,66 @@ def init_db():
             )
         """)
 
-    # Lightweight migration for older DBs that were created before the
-    # shipping/lead-time fields were added to invoices.
-    for column in [
+    # Lightweight migrations for columns added after the initial schema.
+    #
+    # Postgres: each ALTER TABLE is wrapped in a SAVEPOINT so a "column already
+    # exists" error rolls back only that single statement, not the entire
+    # transaction (psycopg2 aborts the whole tx on any error otherwise).
+    # SQLite: a failed statement does not abort the connection, so a plain
+    # try/except is sufficient.
+    _invoice_cols = [
         ("port_of_loading", "TEXT"),
-        ("shipment_date", "TEXT"),
+        ("shipment_date",   "TEXT"),
         ("expected_delivery", "TEXT"),
-        ("lead_time", "TEXT"),
-        ("transit_time", "TEXT"),
-    ]:
-        try:
-            _execute(conn, f"ALTER TABLE invoices ADD COLUMN {column[0]} {column[1]}")
-        except Exception:
-            pass
-
-    # Lightweight migration for procurement_memory columns added after initial schema.
-    for col_def in [
+        ("lead_time",       "TEXT"),
+        ("transit_time",    "TEXT"),
+    ]
+    _pm_cols = [
         ("availability",      "TEXT"),
         ("recommendation_id", "INTEGER"),
-    ]:
-        try:
-            _execute(conn, f"ALTER TABLE procurement_memory ADD COLUMN {col_def[0]} {col_def[1]}")
-        except Exception:
-            pass
+    ]
+    _rec_cols = [
+        ("parent_rec_id", "INTEGER"),
+    ]
+
+    if _use_postgres:
+        for col_name, col_type in _invoice_cols:
+            try:
+                cur.execute(f"SAVEPOINT mig_inv_{col_name}")
+                cur.execute(f"ALTER TABLE invoices ADD COLUMN {col_name} {col_type}")
+                cur.execute(f"RELEASE SAVEPOINT mig_inv_{col_name}")
+            except Exception:
+                cur.execute(f"ROLLBACK TO SAVEPOINT mig_inv_{col_name}")
+        for col_name, col_type in _pm_cols:
+            try:
+                cur.execute(f"SAVEPOINT mig_pm_{col_name}")
+                cur.execute(f"ALTER TABLE procurement_memory ADD COLUMN {col_name} {col_type}")
+                cur.execute(f"RELEASE SAVEPOINT mig_pm_{col_name}")
+            except Exception:
+                cur.execute(f"ROLLBACK TO SAVEPOINT mig_pm_{col_name}")
+        for col_name, col_type in _rec_cols:
+            try:
+                cur.execute(f"SAVEPOINT mig_rec_{col_name}")
+                cur.execute(f"ALTER TABLE procurement_recommendations ADD COLUMN {col_name} {col_type}")
+                cur.execute(f"RELEASE SAVEPOINT mig_rec_{col_name}")
+            except Exception:
+                cur.execute(f"ROLLBACK TO SAVEPOINT mig_rec_{col_name}")
+    else:
+        for col_name, col_type in _invoice_cols:
+            try:
+                conn.execute(f"ALTER TABLE invoices ADD COLUMN {col_name} {col_type}")
+            except Exception:
+                pass
+        for col_name, col_type in _pm_cols:
+            try:
+                conn.execute(f"ALTER TABLE procurement_memory ADD COLUMN {col_name} {col_type}")
+            except Exception:
+                pass
+        for col_name, col_type in _rec_cols:
+            try:
+                conn.execute(f"ALTER TABLE procurement_recommendations ADD COLUMN {col_name} {col_type}")
+            except Exception:
+                pass
 
     conn.commit()
     conn.close()

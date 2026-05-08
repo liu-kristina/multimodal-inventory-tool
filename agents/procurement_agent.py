@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from database import _execute, _use_postgres, get_connection
+from database import _execute, _insert_id, _use_postgres, get_connection
 
 SUPPLIER_EMAILS = {
     "Pacific Rim BioMaterials Co.": "jchen@pacificrimbiomaterials.com",
@@ -183,7 +183,7 @@ def _save_draft(draft: dict) -> dict:
             ).fetchone()
             recommendation_id = row["id"]
         else:
-            rec_cur = _execute(
+            recommendation_id = _insert_id(
                 conn,
                 """
                 INSERT INTO procurement_recommendations
@@ -202,7 +202,6 @@ def _save_draft(draft: dict) -> dict:
                     draft["reason"],
                 ),
             )
-            recommendation_id = rec_cur.lastrowid
 
         draft_id = str(uuid.uuid4())[:8]
         body = draft["body"].replace("{run_id}", draft_id)

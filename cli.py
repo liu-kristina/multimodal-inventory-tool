@@ -992,6 +992,47 @@ def cmd_run_procurement(args):
         print(f"  - Errors:                  {result['errors']}")
 
 
+def cmd_db_check(args):
+    """Print database backend, host, stock count, and sample products."""
+    import os as _os
+    from database import get_connection, _execute, _use_postgres, DATABASE_URL, DB_PATH
+
+    db_url = DATABASE_URL or ""
+    if _use_postgres:
+        # Show host only — never print credentials
+        try:
+            import urllib.parse as _up
+            _parsed = _up.urlparse(db_url)
+            host_display = _parsed.hostname or "(unknown host)"
+        except Exception:
+            host_display = "(unknown host)"
+        print(f"[DB CHECK] Backend  : PostgreSQL")
+        print(f"[DB CHECK] Host     : {host_display}")
+    else:
+        print(f"[DB CHECK] Backend  : SQLite")
+        print(f"[DB CHECK] Path     : {DB_PATH}")
+
+    conn = get_connection()
+    try:
+        count = _execute(conn, "SELECT COUNT(*) AS cnt FROM stock").fetchone()
+        cnt = count["cnt"] if count else 0
+        print(f"[DB CHECK] Stock rows: {cnt}")
+
+        rows = _execute(
+            conn,
+            "SELECT product_name, quantity_kg, unit FROM stock ORDER BY product_name LIMIT 5",
+        ).fetchall()
+        if rows:
+            print("[DB CHECK] Sample products:")
+            for r in rows:
+                unit = r["unit"] or "kg"
+                print(f"  • {r['product_name']}: {r['quantity_kg']:.1f} {unit}")
+        else:
+            print("[DB CHECK] No stock rows found — run `python cli.py demo-seed` first.")
+    finally:
+        conn.close()
+
+
 DEMO_RUN_ID = "demo0001"   # fixed run_id used in demo-seed and demo instructions
 
 
@@ -1732,7 +1773,7 @@ def cmd_procurement_action_test(args):
     import sys
     import types
     import os
-    from database import get_connection, _execute, init_db
+    from database import get_connection, _execute, _insert_id, init_db
     from agents.procurement_agent import run_recommendation_from_quote
 
     print("[PROCUREMENT ACTION TEST] Initialising...")
@@ -1761,14 +1802,14 @@ def cmd_procurement_action_test(args):
         conn.commit()
 
         # Seed a rec that simulates state after RFQ was sent and quote received
-        orig_rec_id = _execute(conn,
+        orig_rec_id = _insert_id(conn,
             "INSERT INTO procurement_recommendations "
             "(product_name, supplier, supplier_email, current_stock_kg, reorder_at_kg, "
             "suggested_order_qty, urgency, reason, status) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (PRODUCT, "TestSupplier", "supplier@test.example",
              5.0, 20.0, 35.0, "high", "Original rec.", "quote_received"),
-        ).lastrowid
+        )
         conn.commit()
 
         quote_fields = {
@@ -1821,14 +1862,14 @@ def cmd_procurement_action_test(args):
 
         # ── Test D ────────────────────────────────────────────────────────────
         print("\n[TEST D] REJECT quote -> no approval draft, no email")
-        reject_rec_id = _execute(conn,
+        reject_rec_id = _insert_id(conn,
             "INSERT INTO procurement_recommendations "
             "(product_name, supplier, supplier_email, current_stock_kg, reorder_at_kg, "
             "suggested_order_qty, urgency, reason, status) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (PRODUCT, "TestSupplier", "supplier@test.example",
              5.0, 20.0, 35.0, "high", "Reject-test rec.", "quote_received"),
-        ).lastrowid
+        )
         conn.commit()
         reject_fields = {"unit_price": None, "availability": "out of stock",
                          "lead_time": None, "shipping_cost": None, "quote_validity": None}
@@ -1843,14 +1884,14 @@ def cmd_procurement_action_test(args):
         # ── Test E ────────────────────────────────────────────────────────────
         print("\n[TEST E] APPROVE ANYWAY sends supplier order via create_order_approval_draft")
         from agents.procurement_agent import create_order_approval_draft, send_supplier_order_email
-        aa_rec_id = _execute(conn,
+        aa_rec_id = _insert_id(conn,
             "INSERT INTO procurement_recommendations "
             "(product_name, supplier, supplier_email, current_stock_kg, reorder_at_kg, "
             "suggested_order_qty, urgency, reason, status) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (PRODUCT, "TestSupplier", "supplier@test.example",
              5.0, 20.0, 35.0, "high", "No-alt rec.", "no_alternative_supplier"),
-        ).lastrowid
+        )
         conn.commit()
         _execute(conn, "UPDATE procurement_recommendations SET status = 'approved' WHERE id = ?", (aa_rec_id,))
         conn.commit()
@@ -1922,7 +1963,7 @@ def cmd_email_loop_test(args):
     import sys
     import types
     import os
-    from database import get_connection, _execute, init_db
+    from database import get_connection, _execute, _insert_id, init_db
     from agents.procurement_agent import (
         extract_quote_fields,
         run_recommendation_from_quote,
@@ -2086,14 +2127,14 @@ def cmd_email_loop_test(args):
             (PRODUCT, "Demo Supplier", "demo@supplier.com", 19.0, 20.0, 35.0, "high",
              "Rejected primary rec.", "rejected"),
         )
-        alt5_id = _execute(
+        alt5_id = _insert_id(
             conn,
             "INSERT INTO procurement_recommendations "
             "(product_name, supplier, supplier_email, current_stock_kg, reorder_at_kg, "
             "suggested_order_qty, urgency, reason, status) VALUES (?,?,?,?,?,?,?,?,?)",
             (PRODUCT, "AltSupplier Corp", "alt@supplier.com", 19.0, 20.0, 35.0, "high",
              "Alternative rec.", "quote_received"),
-        ).lastrowid
+        )
         conn.commit()
         alt5 = find_alternative_recommendation(conn, PRODUCT, "Demo Supplier")
         ok5_found = alt5 is not None and alt5["supplier"] == "AltSupplier Corp"
@@ -2112,14 +2153,14 @@ def cmd_email_loop_test(args):
         print("\n[EMAIL LOOP TEST] Stage 6: REJECT with no alternative -> fallback options email")
         sent_emails.clear()
         conn = get_connection()
-        noalt_rec_id = _execute(
+        noalt_rec_id = _insert_id(
             conn,
             "INSERT INTO procurement_recommendations "
             "(product_name, supplier, supplier_email, current_stock_kg, reorder_at_kg, "
             "suggested_order_qty, urgency, reason, status) VALUES (?,?,?,?,?,?,?,?,?)",
             (PRODUCT, "OnlySupplier", "only@supplier.com", 19.0, 20.0, 35.0, "high",
              "No-alt rejected rec.", "rejected"),
-        ).lastrowid
+        )
         conn.commit()
         conn.close()
         notif6 = send_no_alternative_notification(noalt_rec_id)
@@ -2131,14 +2172,14 @@ def cmd_email_loop_test(args):
         print("\n[EMAIL LOOP TEST] Stage 7: APPROVE ANYWAY -> order email sent")
         sent_emails.clear()
         conn = get_connection()
-        aa_rec_id = _execute(
+        aa_rec_id = _insert_id(
             conn,
             "INSERT INTO procurement_recommendations "
             "(product_name, supplier, supplier_email, current_stock_kg, reorder_at_kg, "
             "suggested_order_qty, urgency, reason, status) VALUES (?,?,?,?,?,?,?,?,?)",
             (PRODUCT, "Demo Supplier", "demo@supplier.com", 19.0, 20.0, 35.0, "high",
              "Approve-anyway rec.", "no_alternative_supplier"),
-        ).lastrowid
+        )
         _execute(
             conn,
             "UPDATE procurement_recommendations SET status = 'approved' WHERE id = ?",
@@ -2162,14 +2203,14 @@ def cmd_email_loop_test(args):
         print("\n[EMAIL LOOP TEST] Stage 8: PROVIDE NEW QUOTE -> new recommendation + approval sent")
         sent_emails.clear()
         conn = get_connection()
-        pnq_rec_id = _execute(
+        pnq_rec_id = _insert_id(
             conn,
             "INSERT INTO procurement_recommendations "
             "(product_name, supplier, supplier_email, current_stock_kg, reorder_at_kg, "
             "suggested_order_qty, urgency, reason, status) VALUES (?,?,?,?,?,?,?,?,?)",
             (PRODUCT, "Demo Supplier", "demo@supplier.com", 19.0, 20.0, 35.0, "high",
              "PNQ base rec.", "quote_received"),
-        ).lastrowid
+        )
         conn.commit()
         pnq_body = (
             "Unit price: $11.00/kg\n"
@@ -2191,14 +2232,14 @@ def cmd_email_loop_test(args):
         print("\n[EMAIL LOOP TEST] Stage 9: STOP PURCHASE -> status=stopped, no order sent")
         sent_emails.clear()
         conn = get_connection()
-        stop_rec_id = _execute(
+        stop_rec_id = _insert_id(
             conn,
             "INSERT INTO procurement_recommendations "
             "(product_name, supplier, supplier_email, current_stock_kg, reorder_at_kg, "
             "suggested_order_qty, urgency, reason, status) VALUES (?,?,?,?,?,?,?,?,?)",
             (PRODUCT, "Demo Supplier", "demo@supplier.com", 19.0, 20.0, 35.0, "high",
              "Stop rec.", "recommendation_created"),
-        ).lastrowid
+        )
         conn.commit()
         _execute(
             conn,
@@ -2276,7 +2317,7 @@ def cmd_business_demo_test(args):
     import sys
     import types
     import os
-    from database import get_connection, _execute, init_db, _use_postgres
+    from database import get_connection, _execute, _insert_id, init_db, _use_postgres
     from agents.procurement_agent import (
         extract_quote_fields,
         run_recommendation_from_quote,
@@ -2386,13 +2427,13 @@ def cmd_business_demo_test(args):
         print("\n[BUSINESS DEMO TEST] Stage 2: Collagen Powder good quote -> APPROVE -> order email sent")
         sent_emails.clear()
         conn = get_connection()
-        cp_rec_id = _execute(conn,
+        cp_rec_id = _insert_id(conn,
             "INSERT INTO procurement_recommendations "
             "(product_name, supplier, supplier_email, current_stock_kg, reorder_at_kg, "
             "suggested_order_qty, urgency, reason, status) VALUES (?,?,?,?,?,?,?,?,?)",
             (PRODUCT_CP, SUPPLIER_CP, "jchen@pacificrimbiomaterials.com",
              cp_qty, 120.0, 400.0, "high", "Below reorder threshold.", "quote_received"),
-        ).lastrowid
+        )
         conn.commit()
         cp_quote_body = (
             "Unit price: $66.00/kg\n"
@@ -2445,7 +2486,7 @@ def cmd_business_demo_test(args):
         sent_emails.clear()
         conn = get_connection()
         # Seed a rejected primary rec (Pacific Rim — risky quote was rejected)
-        fcp_primary_rec_id = _execute(conn,
+        fcp_primary_rec_id = _insert_id(conn,
             "INSERT INTO procurement_recommendations "
             "(product_name, supplier, supplier_email, current_stock_kg, reorder_at_kg, "
             "suggested_order_qty, urgency, reason, status) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -2453,7 +2494,7 @@ def cmd_business_demo_test(args):
              fcp_qty, 120.0, 130.0, "high",
              "Risky quote: limited stock, 35-day lead time, high freight. NEEDS_HUMAN_REVIEW",
              "rejected"),
-        ).lastrowid
+        )
         conn.commit()
 
         # Call the real rejection-fallback handler — no pre-seeded alt rec exists,
@@ -3309,7 +3350,7 @@ def build_parser():
     feedback_sub.add_parser("once", help="Fetch and print unread procurement feedback emails")
 
     # run-procurement
-    sub.add_parser("run-procurement", help="Run Procurement Agent against inventory.db")
+    sub.add_parser("run-procurement", help="Run Procurement Agent against the active database")
 
     # route-test
     sub.add_parser("route-test", help="Simulate all 4 Gmail label routing flows (no Gmail needed)")
@@ -3372,6 +3413,9 @@ def build_parser():
         help="End-to-end business demo story: CUST-DEMO-001 -> Collagen Powder approve + FCP reject paths",
     )
 
+    # db-check
+    sub.add_parser("db-check", help="Print database backend, host, stock count, and sample products")
+
     # slack-agent
     sub.add_parser("slack-agent", help="Start Hermes Slack bot using Socket Mode")
 
@@ -3415,6 +3459,7 @@ def main():
         "email-loop-test":         cmd_email_loop_test,
         "business-demo-test":      cmd_business_demo_test,
         "dedup-test":              cmd_dedup_test,
+        "db-check":                cmd_db_check,
         "slack-agent":             cmd_slack_agent,
         "slack-notify-test":       cmd_slack_notify_test,
     }
