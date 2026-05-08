@@ -10,7 +10,7 @@ Run once on Railway:
 import sys, os, uuid, random
 from datetime import datetime, timedelta
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from database import get_connection, _execute
 
 SUPPLIERS = [
