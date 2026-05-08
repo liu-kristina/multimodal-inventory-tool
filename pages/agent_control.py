@@ -260,16 +260,15 @@ def get_supplier_scorecard() -> list[dict]:
     try:
         rows = _execute(conn, """
             SELECT
-                d.supplier,
+                COALESCE(parsed_supplier, 'Unknown') AS supplier,
                 COUNT(*) AS total,
-                SUM(CASE WHEN r.parsed_action IN ('APPROVE','APPROVE ANYWAY') THEN 1 ELSE 0 END) AS approved,
-                SUM(CASE WHEN r.parsed_action IN ('REJECT','STOP PURCHASE') THEN 1 ELSE 0 END) AS rejected,
-                SUM(CASE WHEN r.parsed_action IN ('CHANGE','PROVIDE NEW QUOTE') THEN 1 ELSE 0 END) AS changed,
-                AVG(rec.suggested_order_qty) AS avg_qty
-            FROM procurement_email_drafts d
-            JOIN procurement_replies r ON r.draft_id = d.id
-            LEFT JOIN procurement_recommendations rec ON rec.id = d.recommendation_id
-            GROUP BY d.supplier
+                SUM(CASE WHEN parsed_action IN ('APPROVE','APPROVE ANYWAY') THEN 1 ELSE 0 END) AS approved,
+                SUM(CASE WHEN parsed_action IN ('REJECT','STOP PURCHASE') THEN 1 ELSE 0 END) AS rejected,
+                SUM(CASE WHEN parsed_action IN ('CHANGE','PROVIDE NEW QUOTE') THEN 1 ELSE 0 END) AS changed,
+                AVG(parsed_quantity) AS avg_qty
+            FROM procurement_replies
+            WHERE parsed_supplier IS NOT NULL
+            GROUP BY parsed_supplier
             ORDER BY total DESC
         """).fetchall()
         result = []
@@ -1019,4 +1018,5 @@ def resolve_flag(n_clicks):
 )
 def refresh_approval_history(n):
     return _render_approval_history(get_approval_history())
+
 
