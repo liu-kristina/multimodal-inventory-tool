@@ -117,19 +117,19 @@ def get_flags(resolved: bool = False) -> list[dict]:
 def get_stats() -> dict:
     conn = get_connection()
     try:
-        invoices = _execute(conn, "SELECT COUNT(*) FROM invoices").fetchone()[0]
+        invoices = _execute(conn, "SELECT COUNT(*) AS n FROM invoices").fetchone()["n"]
     except Exception:
         invoices = 0
     try:
         alerts = _execute(
-            conn, "SELECT COUNT(*) FROM stock WHERE quantity_kg < reorder_at"
-        ).fetchone()[0]
+            conn, "SELECT COUNT(*) AS n FROM stock WHERE quantity_kg < reorder_at"
+        ).fetchone()["n"]
     except Exception:
         alerts = 0
     try:
         flags = _execute(
-            conn, "SELECT COUNT(*) FROM agent_flags WHERE resolved=0"
-        ).fetchone()[0]
+            conn, "SELECT COUNT(*) AS n FROM agent_flags WHERE resolved=0"
+        ).fetchone()["n"]
     except Exception:
         flags = 0
     conn.close()
