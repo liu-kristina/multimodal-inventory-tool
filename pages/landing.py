@@ -142,7 +142,7 @@ layout = html.Div([
                     html.P("The platform", className="h-section-label"),
                     html.H2("Everything your procurement team needs", className="h-section-title"),
                     html.P(
-                        "One connected workspace — from invoice upload to supplier Q&A to "
+                        "One connected workspace — from invoice processing to supplier Q&A to "
                         "automated reorder drafts.",
                         className="h-section-body",
                         style={"maxWidth": "100%"},
