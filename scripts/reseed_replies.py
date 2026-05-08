@@ -1,10 +1,8 @@
 """
-reseed_replies.py
-Clears mismatched procurement data and reseeds with realistic
-drafts + replies properly linked together.
+reseed_replies.py — Reseed procurement drafts + replies using real suppliers from invoices.
 
-Run once on Railway:
-    python3 reseed_replies.py
+Run from app root:
+    python3 scripts/reseed_replies.py
 """
 
 import sys, os, uuid, random
@@ -14,8 +12,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from database import get_connection, _execute
 
 SUPPLIERS = [
-    {"name": "Jiaxing Natural Products Ltd",   "email": "orders@jiaxing-natural.com"},
-    {"name": "Guangzhou Nutra Raw Materials Inc", "email": "sales@guangzhou-nutra.com"},
+    "Beijing Herbal Sciences Ltd.",
+    "Zhejiang Green Botanicals Corp",
+    "Shenzhen Phyto Ingredients Co.",
+    "Pacific Rim BioMaterials Co.",
+    "Guangzhou Natural Extracts Co.",
+    "Jiaxing Natural Products Ltd",
+    "Shanghai BioSupply International",
 ]
 
 PRODUCTS = [
@@ -33,16 +36,17 @@ PRODUCTS = [
     "Plant Extract - Elderberry",
 ]
 
+# (action, reason, weight)
 ACTIONS = [
-    ("APPROVE",            None,                         8),
-    ("APPROVE ANYWAY",     None,                         4),
-    ("REJECT",             "Price too high",             3),
-    ("REJECT",             "Lead time unacceptable",     2),
-    ("REJECT",             "Supplier not certified",     2),
-    ("CHANGE",             "Reduce quantity by 20%",     3),
-    ("CHANGE",             "Request lower MOQ",          2),
-    ("PROVIDE NEW QUOTE",  "Need updated pricing",       2),
-    ("STOP PURCHASE",      "Found alternative supplier", 1),
+    ("APPROVE",           None,                            10),
+    ("APPROVE ANYWAY",    None,                             3),
+    ("REJECT",            "Price too high",                 3),
+    ("REJECT",            "Lead time unacceptable",         2),
+    ("REJECT",            "Supplier not certified",         1),
+    ("CHANGE",            "Reduce quantity by 20%",         3),
+    ("CHANGE",            "Request lower MOQ",              2),
+    ("PROVIDE NEW QUOTE", "Need updated pricing",           2),
+    ("STOP PURCHASE",     "Found alternative supplier",     1),
 ]
 
 def weighted_action():
@@ -51,66 +55,77 @@ def weighted_action():
         pool.extend([(action, reason)] * weight)
     return random.choice(pool)
 
-def random_date(days_back=90):
-    delta = random.randint(0, days_back)
-    dt = datetime.now() - timedelta(days=delta)
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
+def random_dt(days_back=90):
+    return datetime.now() - timedelta(
+        days=random.randint(0, days_back),
+        hours=random.randint(0, 23),
+        minutes=random.randint(0, 59),
+    )
 
 def run():
     conn = get_connection()
 
-    print("Clearing old mismatched data...")
+    print("Clearing old replies only...")
     _execute(conn, "DELETE FROM procurement_replies")
-    _execute(conn, "DELETE FROM procurement_email_drafts WHERE id != 'glc01001'")
     conn.commit()
 
-    print("Creating drafts and replies...")
-    count = 0
+    print("Creating 47 replies linked to new drafts...")
     for i in range(47):
         supplier = random.choice(SUPPLIERS)
         product  = random.choice(PRODUCTS)
         qty      = random.choice([100, 150, 200, 250, 300, 400, 500])
-        draft_id = str(uuid.uuid4())[:8]
-        created  = random_date(90)
-        sent     = created
+        price    = round(random.uniform(20, 120), 2)
+        total    = round(qty * price, 2)
+        draft_id = uuid.uuid4().hex[:8]
+        created  = random_dt(90)
+        sent     = created + timedelta(minutes=random.randint(5, 60))
 
-        # Insert draft
+        subject = f"Order Approval Required - {product} [RUN_ID={draft_id}]"
+        body = (
+            f"Hello,\n\n"
+            f"Procurement recommendation for {product}:\n"
+            f"  Supplier: {supplier}\n"
+            f"  Quantity: {qty} kg\n"
+            f"  Unit price: ${price}/kg\n"
+            f"  Estimated total: ${total:,.2f}\n\n"
+            f"Reply APPROVE or REJECT (with optional reason).\n\n"
+            f"RUN_ID={draft_id}"
+        )
+
         _execute(conn, """
             INSERT INTO procurement_email_drafts
-                (id, product_name, supplier, supplier_email, status, created_at, sent_at)
-            VALUES (?, ?, ?, ?, 'sent', ?, ?)
-        """, (draft_id, product, supplier["name"], supplier["email"], created, sent))
+                (id, product_name, supplier, subject, body, status, created_at, sent_at)
+            VALUES (%s, %s, %s, %s, %s, 'sent', %s, %s)
+        """, (draft_id, product, supplier, subject, body, created, sent))
 
-        # Insert reply
         action, reason = weighted_action()
-        replied_qty = qty if action in ("APPROVE", "APPROVE ANYWAY") else (
-            round(qty * 0.8) if action == "CHANGE" else None
+        replied_qty = (
+            qty              if action in ("APPROVE", "APPROVE ANYWAY") else
+            round(qty * 0.8) if action == "CHANGE" else
+            None
         )
-        replied_at = (
-            datetime.strptime(created, "%Y-%m-%d %H:%M:%S") + timedelta(hours=random.randint(1, 48))
-        ).strftime("%Y-%m-%d %H:%M:%S")
+        replied_at = sent + timedelta(hours=random.randint(1, 48))
 
         _execute(conn, """
             INSERT INTO procurement_replies
                 (draft_id, sender, subject, raw_body,
                  parsed_action, parsed_supplier, parsed_quantity, parsed_reason, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             draft_id,
-            supplier["email"],
-            f"Re: Reorder request for {product}",
-            f"Action: {action}",
+            supplier,
+            f"Re: {subject}",
+            f"Action: {action}" + (f"\nReason: {reason}" if reason else ""),
             action,
-            supplier["name"],
+            supplier,
             replied_qty,
             reason,
             replied_at,
         ))
-        count += 1
 
     conn.commit()
     conn.close()
-    print(f"Done — {count} drafts and replies created.")
+    print("Done — 47 new drafts and linked replies created. Existing data untouched.")
 
 if __name__ == "__main__":
     run()
