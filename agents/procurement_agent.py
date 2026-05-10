@@ -1387,6 +1387,17 @@ def run_recommendation_from_quote(conn, rec_id: int, quote_fields: dict) -> dict
             send_result = send_order_approval_draft(approval_draft_id)
         except Exception as exc:
             send_result = f"ERROR: {exc}"
+        try:
+            from agents.slack_notifier import send_approval_reminder
+            send_approval_reminder(
+                product_name=product_name,
+                supplier=supplier,
+                run_id=approval_draft_id,
+                quantity=quantity,
+                decision=decision["action"],
+            )
+        except Exception as exc:
+            print(f"[SLACK NOTIFY] Unexpected error sending approval reminder: {exc}")
 
     return {
         "new_rec_id":        new_rec_id,

@@ -23,6 +23,8 @@ def send_approval_reminder(
     product_name: str,
     supplier: str,
     run_id: str,
+    quantity: float | None = None,
+    decision: str | None = None,
 ) -> None:
     """Post a one-way procurement approval reminder to SLACK_APPROVAL_CHANNEL.
 
@@ -33,6 +35,8 @@ def send_approval_reminder(
         product_name: the product that needs approval
         supplier:     the supplier associated with the recommendation
         run_id:       the approval draft ID (= email RUN_ID the approver replies to)
+        quantity:     suggested order quantity in kg (optional)
+        decision:     recommendation decision action string (optional)
     """
     channel   = os.environ.get("SLACK_APPROVAL_CHANNEL")
     bot_token = os.environ.get("SLACK_BOT_TOKEN")
@@ -44,11 +48,16 @@ def send_approval_reminder(
         print("[SLACK NOTIFY] SLACK_BOT_TOKEN not set; skipping approval reminder.")
         return
 
+    qty_line      = f"*Quantity:* {quantity:.0f} kg\n" if quantity is not None else ""
+    decision_line = f"*Decision:* {decision}\n"        if decision  is not None else ""
+
     message = (
         ":bell: *Procurement approval needed*\n\n"
         "A new procurement recommendation is waiting for your approval.\n\n"
         f"*Product:* {product_name}\n"
         f"*Supplier:* {supplier}\n"
+        f"{qty_line}"
+        f"{decision_line}"
         f"*Run ID:* {run_id}\n\n"
         "Please check your email and *reply by email* with "
         "APPROVE / REJECT / APPROVE ANYWAY / STOP PURCHASE."

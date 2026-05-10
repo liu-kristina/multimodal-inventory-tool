@@ -173,8 +173,6 @@ def _process_quote_reply(r: dict, mark_done_fn) -> None:
                 print(f"[APPROVAL DRAFT] id={result['approval_draft_id']} for {product_name}")
                 if result["send_result"]:
                     print(f"[APPROVAL SENT] {result['send_result']}")
-                from agents.slack_notifier import send_approval_reminder
-                send_approval_reminder(product_name, result["supplier"], result["approval_draft_id"])
     else:
         print(f"[SKIP] run_id={r['run_id']} draft not found or action INVALID")
 
@@ -344,8 +342,6 @@ def _process_approval_reply(r: dict, mark_done_fn) -> None:
                 print(f"[APPROVAL DRAFT] id={result['approval_draft_id']} for {product_name} (new quote)")
                 if result["send_result"]:
                     print(f"[APPROVAL SENT] {result['send_result']}")
-                from agents.slack_notifier import send_approval_reminder
-                send_approval_reminder(product_name, result["supplier"], result["approval_draft_id"])
         else:
             print(f"[APPROVAL] unrecognized action '{action}' for {product_name} — no status update")
     else:
@@ -417,6 +413,16 @@ def _handle_rejection_fallback(conn, product_name, rec_id, rejected_supplier):
         alt_draft_id = create_order_approval_draft(alt["id"])
         result = send_order_approval_draft(alt_draft_id)
         print(f"[FALLBACK] {result}")
+        try:
+            from agents.slack_notifier import send_approval_reminder
+            send_approval_reminder(
+                product_name=product_name,
+                supplier=alt["supplier"],
+                run_id=alt_draft_id,
+                quantity=alt.get("suggested_order_qty"),
+            )
+        except Exception as exc:
+            print(f"[SLACK NOTIFY] Unexpected error in fallback path: {exc}")
 
     elif alt and alt["status"] == "rfq_sent":
         # RFQ already dispatched to this fallback supplier in a previous cycle.
@@ -2351,6 +2357,18 @@ def cmd_business_demo_test(args):
     sys.modules["email_feedback_agent"]        = _fake_efa
     sys.modules["agents.email_feedback_agent"] = _fake_efa
 
+    slack_reminders: list[dict] = []
+    _fake_slack = types.ModuleType("agents.slack_notifier")
+    _fake_slack.send_approval_reminder = (
+        lambda product_name, supplier, run_id, quantity=None, decision=None:
+        slack_reminders.append({
+            "product_name": product_name, "supplier": supplier,
+            "run_id": run_id, "quantity": quantity, "decision": decision,
+        })
+    )
+    _prev_slack = sys.modules.get("agents.slack_notifier")
+    sys.modules["agents.slack_notifier"] = _fake_slack
+
     _prev_approval = os.environ.get("USER_APPROVAL_EMAIL")
     os.environ["USER_APPROVAL_EMAIL"] = "approver@test.example"
 
@@ -2426,6 +2444,7 @@ def cmd_business_demo_test(args):
         # ── Stage 2a: Collagen Powder - good quote -> recommendation + approval ───
         print("\n[BUSINESS DEMO TEST] Stage 2: Collagen Powder good quote -> APPROVE -> order email sent")
         sent_emails.clear()
+        slack_reminders.clear()
         conn = get_connection()
         cp_rec_id = _insert_id(conn,
             "INSERT INTO procurement_recommendations "
@@ -2445,11 +2464,14 @@ def cmd_business_demo_test(args):
         ok2a = cp_result["decision"]["action"] in ("LOW_RISK_RECOMMEND", "NEEDS_HUMAN_REVIEW")
         ok2b = cp_result["approval_draft_id"] is not None
         ok2c = len(sent_emails) >= 1
+        ok2_slack = any(r["product_name"] == PRODUCT_CP for r in slack_reminders)
         results.append(("Stage 2: Collagen Powder good quote -> recommendation + approval sent",
                          ok2a and ok2b and ok2c))
+        results.append(("Stage 2: Slack approval reminder fired for Collagen Powder", ok2_slack))
         print(f"  {'PASS' if ok2a else 'FAIL'}  decision={cp_result['decision']['action']}")
         print(f"  {'PASS' if ok2b else 'FAIL'}  approval_draft_id={cp_result['approval_draft_id']}")
         print(f"  {'PASS' if ok2c else 'FAIL'}  approval email sent ({len(sent_emails)} email(s))")
+        print(f"  {'PASS' if ok2_slack else 'FAIL'}  Slack reminder called ({len(slack_reminders)} call(s))")
 
         # ── Stage 2b: APPROVE -> order sent ──────────────────────────────────────
         cp_approval_draft_id = cp_result["approval_draft_id"]
@@ -2543,6 +2565,7 @@ def cmd_business_demo_test(args):
         # ── Stage 4c: Shanghai quote arrives -> recommendation + approval ──────────
         print("\n[BUSINESS DEMO TEST] Stage 4c: Shanghai quote arrives -> recommendation + approval email")
         sent_emails.clear()
+        slack_reminders.clear()
         fcp_fallback_rec_id = int(dict(fcp_fallback_draft)["recommendation_id"]) if fcp_fallback_draft else None
         if fcp_fallback_rec_id:
             conn = get_connection()
@@ -2563,13 +2586,16 @@ def cmd_business_demo_test(args):
             ok4f = fcp_alt_result["approval_draft_id"] is not None
             ok4g = len(sent_emails) >= 1
             ok4h = not any("Purchase Order" in e.get("subject", "") for e in sent_emails)
+            ok4_slack = any(r["product_name"] == PRODUCT_FCP for r in slack_reminders)
         else:
-            ok4e = ok4f = ok4g = ok4h = False
+            ok4e = ok4f = ok4g = ok4h = ok4_slack = False
         results.append(("Stage 4c: Shanghai quote -> recommendation + approval email (not order)", ok4e and ok4f and ok4g and ok4h))
+        results.append(("Stage 4c: Slack approval reminder fired for Fish Collagen Peptides (Shanghai)", ok4_slack))
         print(f"  {'PASS' if ok4e else 'FAIL'}  decision={fcp_alt_result['decision']['action'] if fcp_fallback_rec_id else '?'}")
         print(f"  {'PASS' if ok4f else 'FAIL'}  approval_draft_id={fcp_alt_result['approval_draft_id'] if fcp_fallback_rec_id else '?'}")
         print(f"  {'PASS' if ok4g else 'FAIL'}  approval email sent ({len(sent_emails)} email(s))")
         print(f"  {'PASS' if ok4h else 'FAIL'}  no purchase order sent")
+        print(f"  {'PASS' if ok4_slack else 'FAIL'}  Slack reminder called ({len(slack_reminders)} call(s))")
 
         # ── Stage 5: CHANGE reply -> Marine BioActives RFQ ────────────────────────
         print("\n[BUSINESS DEMO TEST] Stage 5: CHANGE reply -> new supplier RFQ")
@@ -2652,6 +2678,7 @@ def cmd_business_demo_test(args):
         # ── Stage 5c: Marine BioActives quote -> new recommendation (not order) ────
         print("\n[BUSINESS DEMO TEST] Stage 5c: Marine BioActives quote -> new recommendation")
         sent_emails.clear()
+        slack_reminders.clear()
         change_rec_id = int(dict(change_rfq_draft)["recommendation_id"]) if change_rfq_draft else None
         if change_rec_id:
             conn = get_connection()
@@ -2670,13 +2697,16 @@ def cmd_business_demo_test(args):
             ok5c_decision  = marine_result["decision"]["action"] in ("LOW_RISK_RECOMMEND", "NEEDS_HUMAN_REVIEW")
             ok5c_draft     = marine_result["approval_draft_id"] is not None
             ok5c_no_order  = not any("Purchase Order" in e.get("subject", "") for e in sent_emails)
+            ok5c_slack     = any(r["supplier"] == SUPPLIER_FCP_CHANGE for r in slack_reminders)
         else:
-            ok5c_decision = ok5c_draft = ok5c_no_order = False
+            ok5c_decision = ok5c_draft = ok5c_no_order = ok5c_slack = False
         results.append(("Stage 5c: Marine BioActives quote -> recommendation + approval (not order)",
                          ok5c_decision and ok5c_draft and ok5c_no_order))
+        results.append(("Stage 5c: Slack approval reminder fired for Marine BioActives", ok5c_slack))
         print(f"  {'PASS' if ok5c_decision else 'FAIL'}  decision={marine_result['decision']['action'] if change_rec_id else '?'}")
         print(f"  {'PASS' if ok5c_draft else 'FAIL'}  approval_draft_id={marine_result['approval_draft_id'] if change_rec_id else '?'}")
         print(f"  {'PASS' if ok5c_no_order else 'FAIL'}  no purchase order sent")
+        print(f"  {'PASS' if ok5c_slack else 'FAIL'}  Slack reminder called ({len(slack_reminders)} call(s))")
 
     finally:
         if _prev_efa is None:
@@ -2687,6 +2717,10 @@ def cmd_business_demo_test(args):
             sys.modules.pop("agents.email_feedback_agent", None)
         else:
             sys.modules["agents.email_feedback_agent"] = _prev_agents_efa
+        if _prev_slack is None:
+            sys.modules.pop("agents.slack_notifier", None)
+        else:
+            sys.modules["agents.slack_notifier"] = _prev_slack
         if _prev_approval is None:
             os.environ.pop("USER_APPROVAL_EMAIL", None)
         else:
