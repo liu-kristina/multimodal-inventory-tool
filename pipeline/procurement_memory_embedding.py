@@ -14,6 +14,10 @@ Both fail gracefully — the base procurement workflow continues unchanged witho
 import json
 import math
 import os
+import sys
+
+# Allow imports from the project root (database.py lives there).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dotenv import load_dotenv
 load_dotenv()

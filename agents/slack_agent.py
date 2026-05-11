@@ -21,6 +21,9 @@ import traceback
 from dotenv import load_dotenv
 load_dotenv()
 
+# Allow imports from the pipeline/ subdirectory (e.g. procurement_memory_embedding).
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline"))
+
 
 # ---------------------------------------------------------------------------
 # Entry point
