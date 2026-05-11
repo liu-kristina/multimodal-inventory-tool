@@ -19,6 +19,37 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def format_quantity(quantity) -> str | None:
+    """Return a display string for quantity, or None to suppress the line.
+
+    None          -> None
+    130 / 130.0   -> "130 kg"
+    "130"         -> "130 kg"
+    "130 kg"      -> "130 kg"
+    any other str -> original string (no crash)
+    """
+    if quantity is None:
+        return None
+    if isinstance(quantity, (int, float)):
+        return f"{quantity:.0f} kg"
+    # string branch
+    stripped = str(quantity).strip()
+    try:
+        return f"{float(stripped):.0f} kg"
+    except ValueError:
+        pass
+    # e.g. "130 kg" or "130.5 kg" — try parsing the numeric prefix
+    parts = stripped.split(None, 1)
+    if parts:
+        try:
+            num = float(parts[0])
+            unit = parts[1] if len(parts) > 1 else "kg"
+            return f"{num:.0f} {unit}"
+        except ValueError:
+            pass
+    return stripped  # non-numeric string: pass through unchanged
+
+
 def send_approval_reminder(
     product_name: str,
     supplier: str,
@@ -48,7 +79,8 @@ def send_approval_reminder(
         print("[SLACK NOTIFY] SLACK_BOT_TOKEN not set; skipping approval reminder.")
         return
 
-    qty_line      = f"*Quantity:* {quantity:.0f} kg\n" if quantity is not None else ""
+    qty_str   = format_quantity(quantity)
+    qty_line  = f"*Quantity:* {qty_str}\n" if qty_str is not None else ""
     decision_line = f"*Decision:* {decision}\n"        if decision  is not None else ""
 
     message = (
@@ -63,11 +95,13 @@ def send_approval_reminder(
         "APPROVE / REJECT / APPROVE ANYWAY / STOP PURCHASE."
     )
 
+    print(f"[SLACK NOTIFY] posting to channel={channel!r} run_id={run_id!r}")
     try:
         from slack_sdk import WebClient
         client = WebClient(token=bot_token)
-        client.chat_postMessage(channel=channel, text=message)
+        resp = client.chat_postMessage(channel=channel, text=message)
+        print(f"[SLACK NOTIFY] Slack API success ts={resp.get('ts')!r}")
     except ImportError:
         print("[SLACK NOTIFY] slack_sdk not installed; skipping approval reminder.")
     except Exception as exc:
-        print(f"[SLACK NOTIFY] Failed to send approval reminder: {exc}")
+        print(f"[SLACK NOTIFY] Slack API failure: {exc!r}")

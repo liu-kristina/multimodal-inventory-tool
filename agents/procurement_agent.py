@@ -799,7 +799,7 @@ def build_recommendation_reason(
     lead_time     = quote_fields.get("lead_time")
     shipping_cost = quote_fields.get("shipping_cost")
 
-    lines.append("- Single known supplier; no competing quote available.")
+    lines.append("- Only one supplier quote has been received so far; no competing quote is available yet.")
     lines.append("- Supplier responded to RFQ.")
     lines.append("- Stock is below reorder threshold.")
 
@@ -1389,6 +1389,14 @@ def run_recommendation_from_quote(conn, rec_id: int, quote_fields: dict) -> dict
             send_result = f"ERROR: {exc}"
         try:
             from agents.slack_notifier import send_approval_reminder
+            print(
+                f"[SLACK NOTIFY] sending approval reminder"
+                f" product={product_name!r}"
+                f" supplier={supplier!r}"
+                f" quantity={quantity!r}"
+                f" run_id={approval_draft_id!r}"
+                f" decision={decision['action']!r}"
+            )
             send_approval_reminder(
                 product_name=product_name,
                 supplier=supplier,
@@ -1396,8 +1404,9 @@ def run_recommendation_from_quote(conn, rec_id: int, quote_fields: dict) -> dict
                 quantity=quantity,
                 decision=decision["action"],
             )
+            print("[SLACK NOTIFY] approval reminder call completed")
         except Exception as exc:
-            print(f"[SLACK NOTIFY] Unexpected error sending approval reminder: {exc}")
+            print(f"[SLACK NOTIFY] approval reminder failed: {exc!r}")
 
     return {
         "new_rec_id":        new_rec_id,

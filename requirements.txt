@@ -24,6 +24,7 @@ pycryptodome
 
 # Slack integration (optional)
 slack-bolt
+slack_sdk
 
 # Embedding retrieval for procurement memory (optional — requires OPENAI_API_KEY)
 openai
