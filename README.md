@@ -1,6 +1,6 @@
-# Multimodal Inventory Tool
+# Multimodal AI Inventory & Procurement Tool for Small Businesses
 
-A multi-agent, human-in-the-loop system for small nutraceutical distributors that automates invoice processing, inventory tracking, and procurement decisions — built as a capstone project for the NLP and GenAI program at Easy Learning AI.
+A multi-agent, human-in-the-loop systems that automates invoice processing, inventory tracking, and procurement decisions.
 
 **Live demo:** [multimodal-inventory-tool-production.up.railway.app](https://multimodal-inventory-tool-production.up.railway.app)
 
